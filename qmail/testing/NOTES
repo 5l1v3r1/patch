@@ -1,0 +1,13 @@
+qmail-pop3d.c.diff was made into qmail-pop3d.c.tk-1.diff, but
+might be better if merged with qmail-1.03-pop3d-logging.tk-0.patch.
+
+qmail-1.03-smtplogging-4.tk-1.patch might be better if merged with
+qmail-1.03-smtpd-logging.patch.
+
+the qmail-1.03-pop3d-logging.tk-0.patch and qmail-1.03-smtpd-logging.patch,
+came from the qmail-1.03-logging.patch from:
+
+  http://d-srv.com/sw/patches/
+
+..the barelf one looks a bit better?
+

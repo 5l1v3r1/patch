@@ -1,0 +1,90 @@
+This patch allows you to set $count_new to make "%N" show the total number
+of new messages in each Maildir in a folder_format listing.
+
+This patch applies directily to the debian mutt-1.5.11-4 package.
+
+This patch can be downloaded from:
+
+  http://devsec.org/patch/mutt/mutt-1.5.11_debian_maildir-count.patch
+
+-Thor Kooda
+ 2005-12-08
+
+
+diff -Naru mutt-1.5.11.orig/browser.c mutt-1.5.11/browser.c
+--- mutt-1.5.11.orig/browser.c	2005-12-08 09:16:09.000000000 -0600
++++ mutt-1.5.11/browser.c	2005-12-08 09:16:26.000000000 -0600
+@@ -259,8 +259,16 @@
+ 	break;
+       }
+ #endif
+-      snprintf (tmp, sizeof (tmp), "%%%sc", fmt);
+-      snprintf (dest, destlen, tmp, folder->ff->new ? 'N' : ' ');
++      if (option(OPTCOUNTNEW) && S_ISDIR(folder->ff->mode) && folder->ff->new)
++      {
++        snprintf (tmp, sizeof (tmp), "%%%sd", fmt);
++        snprintf (dest, destlen, tmp, folder->ff->new);
++      }
++      else
++      {
++	snprintf (tmp, sizeof (tmp), "%%%sc", fmt);
++	snprintf (dest, destlen, tmp, folder->ff->new ? 'N' : ' ');
++      }
+       break;
+       
+     case 's':
+diff -Naru mutt-1.5.11.orig/buffy.c mutt-1.5.11/buffy.c
+--- mutt-1.5.11.orig/buffy.c	2005-12-08 09:16:09.000000000 -0600
++++ mutt-1.5.11/buffy.c	2005-12-08 09:17:23.000000000 -0600
+@@ -388,15 +388,11 @@
+ 	  if (*de->d_name != '.' && 
+ 	      (!(p = strstr (de->d_name, ":2,")) || !strchr (p + 3, 'T')))
+ 	  {
+-	    if (!tmp->new)
+-	    {
+-	      /* one new and undeleted message is enough */
+-	      BuffyCount++;
+-	      tmp->new = 1;
+-
+-	      if (! option (OPTMAILDIRMTIME)) /* prevent stat calls */
+-		break;
+-	    }
++	    if (!tmp->new) BuffyCount++;
++	    tmp->new++;
++	    if (!option(OPTCOUNTNEW)) break;
++	    if (! option (OPTMAILDIRMTIME)) /* prevent stat calls */
++	      break;
+ 	    snprintf (path, sizeof (path), "%s/new/%s", tmp->path, de->d_name);
+ 	    if (!stat (path, &smd) && smd.st_mtime > tmp->mtime)
+ 	    {
+diff -Naru mutt-1.5.11.orig/init.h mutt-1.5.11/init.h
+--- mutt-1.5.11.orig/init.h	2005-12-08 09:16:10.000000000 -0600
++++ mutt-1.5.11/init.h	2005-12-08 09:16:26.000000000 -0600
+@@ -340,6 +340,16 @@
+   ** \fIcheck_new\fP is \fIunset\fP, no check for new mail is performed
+   ** while the mailbox is open.
+   */
++  { "count_new", DT_BOOL, R_NONE, OPTCOUNTNEW, 0 },
++  /*
++  ** .pp
++  ** \fBNote:\fP this option only affects \fImaildir\fP and \fIMH\fP style
++  ** mailboxes.
++  ** .pp
++  ** When \fIunset\fP, Mutt will only show whether the mailbox has new mail,
++  ** when \fIset\fP, Mutt will additionally count the number of new messages,
++  ** if any.
++  */
+   { "collapse_unread",	DT_BOOL, R_NONE, OPTCOLLAPSEUNREAD, 1 },
+   /*
+   ** .pp
+diff -Naru mutt-1.5.11.orig/mutt.h mutt-1.5.11/mutt.h
+--- mutt-1.5.11.orig/mutt.h	2005-12-08 09:16:10.000000000 -0600
++++ mutt-1.5.11/mutt.h	2005-12-08 09:16:26.000000000 -0600
+@@ -395,6 +395,7 @@
+   OPTMAILCAPSANITIZE,
+   OPTMAILDIRMTIME,
+   OPTMAILDIRTRASH,
++  OPTCOUNTNEW,
+   OPTMARKERS,
+   OPTMARKOLD,
+   OPTMENUSCROLL,	/* scroll menu instead of implicit next-page */

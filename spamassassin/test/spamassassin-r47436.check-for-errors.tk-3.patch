@@ -1,0 +1,37 @@
+Index: lib/Mail/SpamAssassin/Conf/Parser.pm
+===================================================================
+--- lib/Mail/SpamAssassin/Conf/Parser.pm	(revision 47436)
++++ lib/Mail/SpamAssassin/Conf/Parser.pm	(working copy)
+@@ -485,19 +485,16 @@
+     # Check for description and score issues in lint fashion
+     while ( ($k,$v) = each %{$conf->{descriptions}} ) {
+       if (length($v) > 50) {
+-        warn "warning: description for $k is over 50 chars\n";
+-        $conf->{errors}++;
++        warn("warning: description for $k is over 50 chars\n");
+       }
+       if (!exists $conf->{tests}->{$k}) {
+-        warn "warning: description exists for non-existent rule $k\n";
+-        $conf->{errors}++;
++        warn("warning: description exists for non-existent rule $k\n");
+       }
+     }
+ 
+     while ( my($sk) = each %{$conf->{scores}} ) {
+       if (!exists $conf->{tests}->{$sk}) {
+-        warn "warning: score set for non-existent rule $sk\n";
+-        $conf->{errors}++;
++        warn("warning: score set for non-existent rule $sk\n");
+       }
+     }
+   }
+@@ -516,8 +513,7 @@
+   while ( ($k,$v) = each %{$conf->{tests}} ) {
+     if ($conf->{lint_rules}) {
+       if (length($k) > 22 && $k !~ /^__/ && $k !~ /^T_/) {
+-        warn "warning: rule '$k' is over 22 chars\n";
+-        $conf->{errors}++;
++        warn("warning: rule '$k' is over 22 chars\n");
+       }
+     }
+ 

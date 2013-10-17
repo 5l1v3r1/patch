@@ -1,0 +1,179 @@
+Index: lib/Mail/SpamAssassin.pm
+===================================================================
+--- lib/Mail/SpamAssassin.pm	(revision 47434)
++++ lib/Mail/SpamAssassin.pm	(working copy)
+@@ -1193,7 +1193,8 @@
+ =item $failed = $f->lint_rules ()
+ 
+ Syntax-check the current set of rules.  Returns the number of 
+-syntax errors discovered, or 0 if the configuration is valid.
++syntax warnings and errors discovered, or 0 if the configuration
++is valid.
+ 
+ =cut
+ 
+@@ -1208,9 +1209,11 @@
+ 
+   $self->{lint_rules} = $self->{conf}->{lint_rules} = 1;
+   $self->{syntax_errors} = 0;
++  $self->{syntax_warnings} = 0;
+ 
+   $self->init(1);
+   $self->{syntax_errors} += $self->{conf}->{errors};
++  $self->{syntax_warnings} += $self->{conf}->{warnings};
+ 
+   my $mail = $self->parse(\@testmsg, 1);
+   my $status = Mail::SpamAssassin::PerMsgStatus->new($self, $mail,
+@@ -1218,9 +1221,46 @@
+   $status->check();
+ 
+   $self->{syntax_errors} += $status->{rule_errors};
++  $self->{syntax_warnings} += $status->{rule_warnings};
+   $status->finish();
+   $mail->finish();
+ 
++  return ($self->{syntax_warnings} + $self->{syntax_errors});
++}
++
++###########################################################################
++
++=item $failed = $f->check_for_errors_rules ()
++
++Syntax-check the current set of rules.  Returns the number of 
++syntax errors discovered, or 0 if the configuration is valid.
++
++=cut
++
++sub check_for_errors_rules {
++  my ($self) = @_;
++
++  dbg ("ignore: using a test message to check-for-errors rules");
++  my @testmsg = ("From: ignore\@compiling.spamassassin.taint.org\n", 
++    "Subject: \n",
++    "Message-Id:  <".CORE::time()."\@check_for_errors_rules>\n", "\n",
++    "I need to make this message body somewhat long so TextCat preloads\n"x20);
++
++  $self->{check_for_errors_rules} = $self->{conf}->{check_for_errors_rules} = 1;
++  $self->{syntax_errors} = 0;
++
++  $self->init(1);
++  $self->{syntax_errors} += $self->{conf}->{errors};
++
++  my $mail = $self->parse(\@testmsg, 1);
++  my $status = Mail::SpamAssassin::PerMsgStatus->new($self, $mail,
++                        { disable_auto_learning => 1 } );
++  $status->check();
++
++  $self->{syntax_errors} += $status->{rule_errors};
++  $status->finish();
++  $mail->finish();
++
+   return ($self->{syntax_errors});
+ }
+ 
+Index: lib/Mail/SpamAssassin/Conf/Parser.pm
+===================================================================
+--- lib/Mail/SpamAssassin/Conf/Parser.pm	(revision 47434)
++++ lib/Mail/SpamAssassin/Conf/Parser.pm	(working copy)
+@@ -486,18 +486,18 @@
+     while ( ($k,$v) = each %{$conf->{descriptions}} ) {
+       if (length($v) > 50) {
+         warn "warning: description for $k is over 50 chars\n";
+-        $conf->{errors}++;
++        $conf->{warnings}++;
+       }
+       if (!exists $conf->{tests}->{$k}) {
+         warn "warning: description exists for non-existent rule $k\n";
+-        $conf->{errors}++;
++        $conf->{warnings}++;
+       }
+     }
+ 
+     while ( my($sk) = each %{$conf->{scores}} ) {
+       if (!exists $conf->{tests}->{$sk}) {
+         warn "warning: score set for non-existent rule $sk\n";
+-        $conf->{errors}++;
++        $conf->{warnings}++;
+       }
+     }
+   }
+@@ -517,7 +517,7 @@
+     if ($conf->{lint_rules}) {
+       if (length($k) > 22 && $k !~ /^__/ && $k !~ /^T_/) {
+         warn "warning: rule '$k' is over 22 chars\n";
+-        $conf->{errors}++;
++        $conf->{warnings}++;
+       }
+     }
+ 
+Index: lib/Mail/SpamAssassin/Conf.pm
+===================================================================
+--- lib/Mail/SpamAssassin/Conf.pm	(revision 47434)
++++ lib/Mail/SpamAssassin/Conf.pm	(working copy)
+@@ -3159,6 +3159,7 @@
+   $self->{parser}->set_defaults_from_command_list();
+ 
+   $self->{errors} = 0;
++  $self->{warnings} = 0;
+   $self->{plugins_loaded} = { };
+ 
+   $self->{tests} = { };
+Index: lib/Mail/SpamAssassin/PerMsgStatus.pm
+===================================================================
+--- lib/Mail/SpamAssassin/PerMsgStatus.pm	(revision 47434)
++++ lib/Mail/SpamAssassin/PerMsgStatus.pm	(working copy)
+@@ -81,6 +81,7 @@
+     'tests_already_hit' => { },
+     'hdr_cache'         => { },
+     'rule_errors'       => 0,
++    'rule_warnings'     => 0,
+     'disable_auto_learning' => 0,
+     'auto_learn_status' => undef,
+     'conf'                => $main->{conf},
+Index: spamassassin.raw
+===================================================================
+--- spamassassin.raw	(revision 47434)
++++ spamassassin.raw	(working copy)
+@@ -161,6 +161,7 @@
+   'error-code|exit-code|e:i'                => \$opt{'error-code'},
+   'help|h|?'                                => \$opt{'help'},
+   'lint'                                    => \$opt{'lint'},
++  'check-for-errors'                        => \$opt{'check-for-errors'},
+   'local-only|local|L'                      => \$opt{'local'},
+   'mbox'                                    => sub { $opt{'format'} = 'mbox'; },
+   'mbx'                                     => sub { $opt{'format'} = 'mbx'; },
+@@ -244,6 +245,13 @@
+   exit $res ? 1: 0;
+ }
+ 
++if ( $opt{'check-for-errors'} ) {
++  $spamtest->debug_diagnostics();
++  my $res = $spamtest->check_for_errors_rules();
++  warn "check-for-errors: $res issues detected.  please rerun with debug enabled for more information.\n" if ($res);
++  exit $res ? 1: 0;
++}
++
+ if ( $opt{'remove-addr-from-whitelist'}
+   or $opt{'add-addr-to-whitelist'}
+   or $opt{'add-addr-to-blacklist'} )
+@@ -479,6 +487,7 @@
+  -t, --test-mode                   Pipe message through and add extra
+                                    report to the bottom
+  --lint                            Lint the rule set: report syntax errors
++ --check-for-errors                Check for errors in the rule set
+  -W, --add-to-whitelist            Add addresses in mail to whitelist (AWL)
+  --add-to-blacklist                Add addresses in mail to blacklist (AWL)
+  -R, --remove-from-whitelist       Remove all addresses found in mail
+@@ -586,6 +595,12 @@
+ typos and rules that do not compile correctly.  Exits immediately with
+ 0 if there are no errors, or greater than 0 if any errors are found.
+ 
++=item B<--check-for-errors>
++
++Syntax check the rule set and configuration files, reporting typos and
++rules that do not compile correctly.  Exits immediately with
++0 if there are no errors, or greater than 0 if any errors are found.
++
+ =item B<-W>, B<--add-to-whitelist>
+ 
+ Add all email addresses, in the headers and body of the mail message read

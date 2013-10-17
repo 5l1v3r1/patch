@@ -1,0 +1,41 @@
+  This is a patch for the UnPlug extension (v1.6.06) for Firefox
+(http://unplug.mozdev.org/) to allow the extension to be installed in
+Firefox 3.
+
+  There are some small incompatibilities due to changes in FF3, but it
+works for the most part.
+
+-Thor Kooda
+ tkooda-patch-firefox-unplug (at) devsec (dot) org
+ 2008-08-03
+
+
+diff -Naru unplug-1.6.06-fx/install.rdf unplug-1.6.06-fx_ff3/install.rdf
+--- unplug-1.6.06-fx/install.rdf	2007-06-29 16:48:59.000000000 -0500
++++ unplug-1.6.06-fx_ff3/install.rdf	2008-08-03 19:44:13.000000000 -0500
+@@ -5,12 +5,12 @@
+       xmlns:RDF="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <RDF:Description RDF:about="urn:mozilla:install-manifest"
+          em:id="unplug@compunach"
+-         em:version="1.6.06"
++         em:version="1.6.06 ff3"
+          em:type="2"
+          em:iconURL="chrome://unplug/skin/unplug-32.png"
+-         em:name="UnPlug"
+-         em:description="UnPlug your Plug-ins, free your Media"
+-         em:creator="compunach"
++         em:name="UnPlug ff3"
++         em:description="UnPlug your Plug-ins, free your Media (patched for ff3)"
++         em:creator="compunach (patched for ff3 by tkooda-patch-firefox-unplug@devsec.org"
+          em:translator="jb marcon"
+          em:homepageURL="http://unplug.mozdev.org/"
+          em:optionsURL="chrome://unplug/content/settings.xul"
+@@ -28,7 +28,7 @@
+          <Description>
+             <em:id>{ec8030f7-c20a-464f-9b0e-13a3a9e97384}</em:id>
+             <em:minVersion>1.5</em:minVersion>
+-            <em:maxVersion>2.0.0.*</em:maxVersion>
++            <em:maxVersion>3.*.*.*</em:maxVersion>
+          </Description>
+       </em:targetApplication>
+       

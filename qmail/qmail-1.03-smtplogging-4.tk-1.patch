@@ -1,0 +1,103 @@
+This patch is a modification of Charles Cazabon's patch from:
+
+  http://www.qcc.ca/~charlesc/software/misc/qmail-1.03-mfcheck+badhelo+smtplogging-4.patch
+
+It can be downloaded from:
+
+  http://devsec.org/patch/qmail/qmail-1.03-smtplogging-4.tk-1.patch
+
+This patch only has the smtplogging portion of Charles Cazabon's patch.
+
+-Thor Kooda
+ 2004-03-18
+
+
+diff -Naur qmail-1.03.orig/qmail-smtpd.c qmail-1.03/qmail-smtpd.c
+--- qmail-1.03.orig/qmail-smtpd.c	Mon Jun 15 05:53:16 1998
++++ qmail-1.03/qmail-smtpd.c	Thu Mar 18 02:42:12 2004
+@@ -38,9 +38,26 @@
+ 
+ char ssoutbuf[512];
+ substdio ssout = SUBSTDIO_FDBUF(safewrite,1,ssoutbuf,sizeof ssoutbuf);
++char sserrbuf[512];
++substdio sserr = SUBSTDIO_FDBUF(safewrite,2,sserrbuf,sizeof sserrbuf);
+ 
+ void flush() { substdio_flush(&ssout); }
+ void out(s) char *s; { substdio_puts(&ssout,s); }
++void log1(s1) char *s1; {
++ substdio_putsflush(&sserr,s1); }
++void log2(s1,s2) char *s1; char *s2; {
++ substdio_putsflush(&sserr,s1);
++ substdio_putsflush(&sserr,s2); }
++void log3(s1,s2,s3) char *s1; char *s2; char *s3; {
++ substdio_putsflush(&sserr,s1);
++ substdio_putsflush(&sserr,s2);
++ substdio_putsflush(&sserr,s3); }
++void log5(s1,s2,s3,s4,s5) char *s1; char *s2; char *s3; char *s4; char *s5; {
++ substdio_putsflush(&sserr,s1);
++ substdio_putsflush(&sserr,s2);
++ substdio_putsflush(&sserr,s3);
++ substdio_putsflush(&sserr,s4);
++ substdio_putsflush(&sserr,s5); }
+ 
+ void die_read() { _exit(1); }
+ void die_alarm() { out("451 timeout (#4.4.2)\r\n"); flush(); _exit(1); }
+@@ -96,6 +113,7 @@
+ int bmfok = 0;
+ stralloc bmf = {0};
+ struct constmap mapbmf;
++char mypid[FMT_ULONG];
+ 
+ void setup()
+ {
+@@ -132,6 +150,7 @@
+   remoteinfo = env_get("TCPREMOTEINFO");
+   relayclient = env_get("RELAYCLIENT");
+   dohelo(remotehost);
++  mypid[fmt_ulong(mypid,getpid())] = 0;
+ }
+ 
+ 
+@@ -201,10 +220,16 @@
+ {
+   int j;
+   if (!bmfok) return 0;
+-  if (constmap(&mapbmf,addr.s,addr.len - 1)) return 1;
++  if (constmap(&mapbmf,addr.s,addr.len - 1)) {
++    log5("pid ",mypid," badmailfrom ",addr.s,"\n");
++    return 1;
++  }
+   j = byte_rchr(addr.s,addr.len,'@');
+   if (j < addr.len)
+-    if (constmap(&mapbmf,addr.s + j,addr.len - j - 1)) return 1;
++    if (constmap(&mapbmf,addr.s + j,addr.len - j - 1)) {
++      log5("pid ",mypid," badmailfrom ",addr.s,"\n");
++      return 1;
++    }
+   return 0;
+ }
+ 
+@@ -226,6 +251,7 @@
+ {
+   smtp_greet("250 "); out("\r\n");
+   seenmail = 0; dohelo(arg);
++  log5("pid ",mypid," helo ",arg, "\n");
+ }
+ void smtp_ehlo(arg) char *arg;
+ {
+@@ -245,6 +271,7 @@
+   if (!stralloc_copys(&rcptto,"")) die_nomem();
+   if (!stralloc_copys(&mailfrom,addr.s)) die_nomem();
+   if (!stralloc_0(&mailfrom)) die_nomem();
++  log5("pid ",mypid," mail from: ",arg, "\n");
+   out("250 ok\r\n");
+ }
+ void smtp_rcpt(arg) char *arg; {
+@@ -261,6 +288,7 @@
+   if (!stralloc_cats(&rcptto,"T")) die_nomem();
+   if (!stralloc_cats(&rcptto,addr.s)) die_nomem();
+   if (!stralloc_0(&rcptto)) die_nomem();
++  log5("pid ",mypid," rcpt to: ",arg, "\n");
+   out("250 ok\r\n");
+ }
+ 

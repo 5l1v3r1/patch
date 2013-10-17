@@ -1,0 +1,69 @@
+diff -u mutt-1.3.28.orig/browser.c mutt-1.3.28/browser.c
+--- mutt-1.3.28.orig/browser.c	Tue Dec 18 09:13:17 2001
++++ mutt-1.3.28/browser.c	Wed Jun  4 17:07:57 2003
+@@ -251,8 +251,16 @@
+ 	break;
+       }
+ #endif
+-      snprintf (tmp, sizeof (tmp), "%%%sc", fmt);
+-      snprintf (dest, destlen, tmp, folder->ff->new ? 'N' : ' ');
++      if (option(OPTCOUNTNEW) && S_ISDIR(folder->ff->mode) && folder->ff->new)
++      {
++        snprintf (tmp, sizeof (tmp), "%%%sd", fmt);
++        snprintf (dest, destlen, tmp, folder->ff->new);
++      }
++      else
++      {
++	snprintf (tmp, sizeof (tmp), "%%%sc", fmt);
++	snprintf (dest, destlen, tmp, folder->ff->new ? 'N' : ' ');
++      }
+       break;
+       
+     case 's':
+diff -u mutt-1.3.28.orig/buffy.c mutt-1.3.28/buffy.c
+--- mutt-1.3.28.orig/buffy.c	Wed Oct 10 05:34:11 2001
++++ mutt-1.3.28/buffy.c	Wed Jun  4 17:10:12 2003
+@@ -350,9 +350,9 @@
+ 	      (!(p = strstr (de->d_name, ":2,")) || !strchr (p + 3, 'T')))
+ 	  {
+ 	    /* one new and undeleted message is enough */
+-	    BuffyCount++;
+-	    tmp->new = 1;
+-	    break;
++	    if (!tmp->new) BuffyCount++;
++	    tmp->new++;
++	    if (!option(OPTCOUNTNEW)) break;
+ 	  }
+ 	}
+ 	closedir (dirp);
+diff -u mutt-1.3.28.orig/init.h mutt-1.3.28/init.h
+--- mutt-1.3.28.orig/init.h	Wed Jun  4 16:46:05 2003
++++ mutt-1.3.28/init.h	Wed Jun  4 17:11:35 2003
+@@ -291,6 +291,16 @@
+   ** \fIcheck_new\fP is \fIunset\fP, no check for new mail is performed
+   ** while the mailbox is open.
+   */
++  { "count_new", DT_BOOL, R_NONE, OPTCOUNTNEW, 0 },
++  /*
++  ** .pp
++  ** \fBNote:\fP this option only affects \fImaildir\fP and \fIMH\fP style
++  ** mailboxes.
++  ** .pp
++  ** When \fIunset\fP, Mutt will only show whether the mailbox has new mail,
++  ** when \fIset\fP, Mutt will additionally count the number of new messages,
++  ** if any.
++  */
+   { "collapse_unread",	DT_BOOL, R_NONE, OPTCOLLAPSEUNREAD, 1 },
+   /*
+   ** .pp
+diff -u mutt-1.3.28.orig/mutt.h mutt-1.3.28/mutt.h
+--- mutt-1.3.28.orig/mutt.h	Wed Jun  4 16:46:05 2003
++++ mutt-1.3.28/mutt.h	Wed Jun  4 17:12:05 2003
+@@ -374,6 +374,7 @@
+   OPTKEEPFLAGGED,
+   OPTMAILCAPSANITIZE,
+   OPTMAILDIRTRASH,
++  OPTCOUNTNEW,
+   OPTMARKERS,
+   OPTMARKOLD,
+   OPTMENUSCROLL,	/* scroll menu instead of implicit next-page */

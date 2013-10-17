@@ -1,0 +1,199 @@
+--- mutt-1.1.2.orig/commands.c	Sat Jan  8 11:24:53 2000
++++ mutt-1.1.2/commands.c	Fri Jan 21 13:18:57 2000
+@@ -125,7 +125,7 @@
+   }
+ 
+   if (mutt_copy_message (fpout, Context, cur, cmflags,
+-			 (option (OPTWEED) ? (CH_WEED | CH_REORDER) : 0) | CH_DECODE | CH_FROM) == -1)
++			 (option (OPTWEED) ? (CH_WEED | CH_REORDER) : 0) | CH_DECODE | CH_FROM | CH_REFORMAT_RCVD) == -1)
+   {
+     fclose (fpout);
+     unlink (tempfile);
+--- mutt-1.1.2.orig/copy.c	Thu Jan  6 13:58:54 2000
++++ mutt-1.1.2/copy.c	Sat Jan 22 06:37:28 2000
+@@ -52,6 +52,7 @@
+   int hdr_count;
+   int x;
+   int error;
++  int rcvd_hdr_flag = 0;
+ 
+   if (ftell (in) != off_start)
+     fseek (in, off_start, 0);
+@@ -136,6 +137,7 @@
+     {
+       ignore = 1;
+       this_is_from = 0;
++      rcvd_hdr_flag = 0;
+       if (!from && mutt_strncmp ("From ", buf, 5) == 0)
+       {
+ 	if ((flags & CH_FROM) == 0)
+@@ -169,6 +171,34 @@
+ 	   mutt_strncasecmp ("mime-version:", buf, 13) == 0))
+ 	continue;
+ 
++      /* Reformat the date in a Received: header */
++      if ((flags & CH_REFORMAT_RCVD) &&
++	  mutt_strncasecmp ("Received:", buf, 9) == 0)
++      {
++	char *d = strchr (buf, ';');
++	rcvd_hdr_flag = 1;
++	if (d)
++	{
++	  time_t rcvd;
++
++	  d++;
++	  if ((strlen(d) > 17) && (rcvd = mutt_parse_date (d, NULL)))
++	  {
++	    dprint(1, (debugfile, "Received date reformat:%s -> ", d));
++	    if (strlen(NONULL(RcvdFmt)) > 0)
++	    {
++	      if (*d == ' ')
++	        d++;
++	      mutt_format_received_date(d, (sizeof(buf) - (d-buf)), &rcvd);
++	    }
++	    dprint(1, (debugfile, "%s\n", d));
++	    rcvd_hdr_flag = 0;
++	  }
++	  else
++	    rcvd_hdr_flag = 2;
++	}
++      }
++
+       /* Find x -- the array entry where this header is to be saved */
+       if (flags & CH_REORDER)
+       {
+@@ -185,6 +215,40 @@
+       ignore = 0;
+     } /* If beginning of header */
+ 
++    else if (rcvd_hdr_flag)
++    {
++      char *d;
++
++      d = strchr (buf, ';');
++
++      if (d)
++      {
++	d++;
++	if (*d == ' ')
++	  d++;
++      }
++      else if (rcvd_hdr_flag == 2)
++      {
++	d = buf;
++	SKIPWS(d);
++      }
++
++      if (d)
++      {
++	time_t rcvd;
++
++	rcvd_hdr_flag = 2;
++	if ((strlen(d) > 17) && (rcvd = mutt_parse_date (d, NULL)))
++	{
++	  dprint(1, (debugfile, "Received date reformat:%s -> ", d));
++	  if (strlen(NONULL(RcvdFmt)) > 0)
++	    mutt_format_received_date(d, (sizeof(buf) - (d-buf)), &rcvd);
++	  dprint(1, (debugfile, "%s\n", d));
++	  rcvd_hdr_flag = 0;
++	}
++      }
++    }
++
+     if (!ignore)
+     {
+       /* Save the header in headers[x] */
+@@ -276,6 +340,7 @@
+  	CH_UPDATE_LEN	write new Content-Length: and Lines:
+  	CH_XMIT		ignore Lines: and Content-Length:
+  	CH_WEED		do header weeding
++	CH_REFORMAT_RCVD reformat dates in Received:
+ 
+    prefix
+    	string to use if CH_PREFIX is set
+--- mutt-1.1.2.orig/globals.h	Thu Jan  6 13:58:56 2000
++++ mutt-1.1.2/globals.h	Fri Jan 21 11:16:40 2000
+@@ -83,6 +83,7 @@
+ WHERE char *PrintCmd;
+ WHERE char *QueryCmd;
+ WHERE char *Realname;
++WHERE char *RcvdFmt;
+ WHERE char *SendCharset;
+ WHERE char *Sendmail;
+ WHERE char *Shell;
+--- mutt-1.1.2.orig/hdrline.c	Thu Jan  6 13:58:57 2000
++++ mutt-1.1.2/hdrline.c	Fri Jan 21 13:31:45 2000
+@@ -661,3 +662,36 @@
+ 
+   mutt_FormatString (dest, destlen, s, hdr_format_str, (unsigned long) &hfi, flags);
+ }
++
++
++void mutt_format_received_date (char *dest, size_t destlen, const time_t *rcvd)
++{
++  int do_locales;
++  const char *cp;
++  struct tm *tm;
++  char buf[SHORT_STRING];
++        
++  dest[0] = 0;  
++  cp = RcvdFmt; 
++
++  if (*cp == '!')
++  {
++    do_locales = 0;
++    cp++;
++  }
++  else
++    do_locales = 1;
++ 
++  if (do_locales && Locale)
++    setlocale (LC_TIME, Locale);
++ 
++  tm = localtime (rcvd);
++ 
++  strftime (buf, sizeof(buf), cp, tm);
++  snprintf (dest, destlen, "%s\n", buf);
++ 
++  if (do_locales)
++    setlocale (LC_TIME, "C");
++ 
++}
++
+--- mutt-1.1.2.orig/init.h	Sat Jan  8 11:06:26 2000
++++ mutt-1.1.2/init.h	Sat Jan 22 07:10:21 2000
+@@ -1485,6 +1486,14 @@
+   { "recall",		DT_QUAD, R_NONE, OPT_RECALL, M_ASKYES },
+   /*
+   ** .pp
++  ** This variable controls the format of the presentation date for the
++  ** received headers.  This is passed to the \fIstrftime\fP ** call to
++  ** process the date. See the man page for \fIstrftime(3)\fP for the
++  ** proper syntax.
++  */
++  { "received_format",	DT_STR,	 R_BOTH, UL &RcvdFmt, UL "%a, %d %b %Y %H:%M:%S (%Z)" },
++  /*
++  ** .pp
+   ** Controls whether or not you are prompted to recall postponed messages
+   ** when composing a new message.  Also see ``$postponed''
+   */
+--- mutt-1.1.2.orig/mutt.h	Sat Jan  8 11:06:26 2000
++++ mutt-1.1.2/mutt.h	Fri Jan 21 13:16:26 2000
+@@ -67,6 +67,7 @@
+ #define CH_NOLEN	(1<<12) /* don't write Content-Length: and Lines: */
+ #define CH_WEED_DELIVERED (1<<13) /* weed eventual Delivered-To headers */
+ #define CH_FORCE_FROM	(1<<14)	/* give CH_FROM precedence over CH_WEED? */
++#define CH_REFORMAT_RCVD (1<<15) /* reformat dates in Received: */
+ 
+ /* flags for mutt_enter_string() */
+ #define  M_ALIAS   1      /* do alias "completion" by calling up the alias-menu */
+--- mutt-1.1.2.orig/protos.h	Sat Jan  8 11:06:50 2000
++++ mutt-1.1.2/protos.h	Fri Jan 21 11:25:00 2000
+@@ -149,6 +149,7 @@
+ void mutt_fetchPopMail (void);
+ void mutt_fix_reply_recipients (ENVELOPE *env);
+ void mutt_folder_hook (char *);
++void mutt_format_received_date (char *dest, size_t destlen, const time_t *rcvd);
+ void mutt_forward_intro (FILE *fp, HEADER *cur);
+ void mutt_forward_trailer (FILE *fp);
+ void mutt_free_alias (ALIAS **);

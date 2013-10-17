@@ -1,0 +1,102 @@
+A simple patch to allow logging to stderr w/out timestamps (for use with multilog).
+It provides a new syslog facility called 'multilog'.
+
+Usage: "--syslog=multilog"
+
+
+Index: spamd/spamd.raw
+===================================================================
+--- spamd/spamd.raw	(revision 47476)
++++ spamd/spamd.raw	(working copy)
+@@ -302,6 +302,7 @@
+ # * A log facility of 'stderr' will log to STDERR
+ # * " "   "        "  'null' disables all logging
+ # * " "   "        "  'file' logs to the file "spamd.log"
++# * " "   "        "  'multilog' logs to STDERR w/out timestamps
+ # * Any facility containing non-word characters is interpreted as the name
+ #   of a specific logfile
+ my $log_facility = $opt{'syslog'} || 'mail';
+@@ -357,7 +358,7 @@
+ 
+ # Logging via syslog is requested. Falling back to INET and then STDERR
+ # if opening a UNIX socket fails.
+-if ( $log_socket ne 'file' and $log_facility ne 'null' ) {
++if ( $log_socket ne 'file' and $log_facility ne 'null' and $log_facility ne 'multilog' ) {
+   warn "trying to connect to syslog/${log_socket}...\n" if $opt{'debug'};
+   eval {
+     defined( setlogsock($log_socket) ) || die $!;
+@@ -411,7 +412,7 @@
+ 
+ # Either one of the above failed ot logging to STDERR is explicitly requested --
+ # make STDLOG a dup so we don't have to handle so many special cases later on.
+-if ( $log_facility eq 'stderr' ) {
++if ( $log_facility eq 'stderr' or  $log_facility eq 'multilog') {
+   open( STDLOG, ">&STDERR" ) || die "Can't duplicate stderr: $!\n";
+   $log_socket = 'file';
+ }
+@@ -430,7 +431,7 @@
+   if $opt{'debug'};
+ 
+ # Don't duplicate log messages in debug mode.
+-if ( $log_facility eq 'stderr' and $opt{'debug'} ) {
++if ( $log_facility eq 'stderr' or $log_facility eq 'multilog' and $opt{'debug'} ) {
+   warn "logging to stderr disabled: already debugging to stderr\n";
+   $log_facility = 'null';
+ }
+@@ -450,6 +451,7 @@
+ #   * socket = file
+ #      ^ ^-> facility = stderr
+ #      '---> facility = file
++#      '---> facility = multilog
+ #   * socket = none
+ #      ^-> facility = null
+ #   * socket = (unix|inet|...)
+@@ -463,7 +465,8 @@
+   . "\t\tfile:     ${log_file}\n"
+   . "\tplease report to http://bugzilla.spamassassin.org -- thank you\n"
+   if ( $log_socket eq 'file'
+-  and ( $log_facility ne 'stderr' and $log_facility ne 'file' ) )
++  and ( $log_facility ne 'stderr' and $log_facility ne 'file'
++  and $log_facility ne 'multilog' ) )
+   or ( ( $log_facility eq 'stderr' or $log_facility eq 'file' )
+   and $log_socket ne 'file' )
+   or ( $log_socket   eq 'none' and $log_facility ne 'null' )
+@@ -1648,7 +1651,11 @@
+   #   bug 605  <http://bugzilla.spamassassin.org/show_bug.cgi?id=605>
+   #   more efficient for daemontools if --syslog=stderr is used
+   if ( $log_socket eq 'file' ) {
+-    logmsg_file ($msg);
++    if ( $log_facility eq 'multilog' ) {
++      logmsg_multilog ($msg);
++    } else {
++      logmsg_file ($msg);
++    }
+   }
+ 
+   # log to syslog (if logging isn't disabled completely via 'null')
+@@ -1671,6 +1678,17 @@
+   );
+ }
+ 
++sub logmsg_multilog {
++  my $msg = shift;
++  syswrite(
++    STDLOG,
++    sprintf(
++      "spamd[%s]: %s\n",
++      $$, $msg
++    )
++  );
++}
++
+ sub logmsg_syslog {
+   my $msg = shift;
+ 
+@@ -2121,6 +2139,7 @@
+ 	spamd -s null                 # the same as above
+ 	spamd -s file                 # log to file ./spamd.log
+ 	spamd -s /var/log/spamd.log   # log to file /var/log/spamd.log
++	spamd -s multilog             # log to stderr w/out timestamps
+ 
+ If logging to a file is enabled and that log file is rotated, the spamd server
+ must be restarted with a SIGHUP. (If the log file is just truncated, this is

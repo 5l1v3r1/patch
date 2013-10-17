@@ -1,0 +1,56 @@
+  This is a patch for qmail-1.03 that causes qmail-queue to check for the
+QMAILEXTRA environment variable.  If it exists, a copy of all incoming and
+outgoing mail messages will be sent to the username set in it.
+
+  You could set QMAILEXTRA=log, and put ./msg-log into ~alias/.qmail-log
+to store a copy of every incoming and outgoing message in ~alias/msg-log.
+
+-Thor Kooda
+ tkooda-patch-qmail (at) devsec (dot) org
+ 2004-07-26
+
+
+diff -Naru qmail-1.03.orig/Makefile qmail-1.03/Makefile
+--- qmail-1.03.orig/Makefile	Mon Jun 15 05:53:16 1998
++++ qmail-1.03/Makefile	Mon Jul 26 19:10:58 2004
+@@ -1424,7 +1424,7 @@
+ str.a fs.a auto_qmail.o auto_split.o auto_uids.o
+ 	./load qmail-queue triggerpull.o fmtqfn.o now.o \
+ 	date822fmt.o datetime.a seek.a ndelay.a open.a sig.a \
+-	alloc.a substdio.a error.a str.a fs.a auto_qmail.o \
++	alloc.a substdio.a error.a env.a str.a fs.a auto_qmail.o \
+ 	auto_split.o auto_uids.o 
+ 
+ qmail-queue.0: \
+diff -Naru qmail-1.03.orig/qmail-queue.c qmail-1.03/qmail-queue.c
+--- qmail-1.03.orig/qmail-queue.c	Mon Jun 15 05:53:16 1998
++++ qmail-1.03/qmail-queue.c	Mon Jul 26 19:08:03 2004
+@@ -16,6 +16,7 @@
+ #include "auto_uids.h"
+ #include "date822fmt.h"
+ #include "fmtqfn.h"
++#include "env.h"
+ 
+ #define DEATH 86400 /* 24 hours; _must_ be below q-s's OSSIFIED (36 hours) */
+ #define ADDR 1003
+@@ -155,6 +156,7 @@
+ {
+  unsigned int len;
+  char ch;
++ char *qmailextra = env_get("QMAILEXTRA");
+ 
+  sig_blocknone();
+  umask(033);
+@@ -227,7 +229,11 @@
+   }
+  if (len >= ADDR) die(11);
+ 
+- if (substdio_bput(&ssout,QUEUE_EXTRA,QUEUE_EXTRALEN) == -1) die_write();
++ if (qmailextra) {
++   if (substdio_bput(&ssout,"T",1) == -1) die_write();
++   if (substdio_bput(&ssout,qmailextra,str_len(qmailextra)) == -1) die_write();
++   if (substdio_bput(&ssout,"",1) == -1) die_write();
++ }
+ 
+  for (;;)
+   {

@@ -1,0 +1,32 @@
+  This patch is to allow the msmtp package to look in the environment
+for a password just before falling back to prompting the user.  It
+allows for better scripting msmtp usage (e.g. obtaining the password
+from the gnome-kering).
+
+It can be downloaded from:
+
+  http://devsec.org/patch/msmtp/msmtp-1.4.13.ds1.patch
+
+-Thor Kooda
+ 2009-02-13
+
+
+diff -Naru msmtp-1.4.13.orig/src/msmtp.c msmtp-1.4.13/src/msmtp.c
+--- msmtp-1.4.13.orig/src/msmtp.c	2007-07-16 15:43:02.000000000 -0500
++++ msmtp-1.4.13/src/msmtp.c	2009-02-13 02:38:44.000000000 -0600
+@@ -300,6 +300,15 @@
+     
+     if (!password)
+     {
++	gpw = getenv( "MSMTP_PASSWORD" );
++	if (gpw)
++	{
++	    password = xstrdup(gpw);
++	}
++    }
++    
++    if (!password)
++    {
+ 	prompt = xasprintf(_("password for %s at %s: "), user, hostname);
+ 	gpw = getpass(prompt);
+ 	free(prompt);

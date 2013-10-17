@@ -1,0 +1,1 @@
+For Mutt 1.1.2. Reformat the timestamps in Received headers by converting them into local times and a user-specified format. The conversion uses the format specified in a new $received_format variable. This value can begin with ! to ignore the current locale. To turn off date reformatting, use: set received_format=""

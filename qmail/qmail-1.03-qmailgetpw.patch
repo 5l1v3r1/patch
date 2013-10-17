@@ -1,0 +1,84 @@
+  This is a patch for qmail-1.03 that causes qmail-lspawn to check for the
+QMAILGETPW environment variable.  If it exists, it is used in place of the
+string "bin/qmail-getpw" when qmail-lspawn tries to determine which local
+user controls an address (after checking the qmail-users mechanism).
+  If the QMAILGETPW environment variable is found, it adds the hostname as
+the second argument.
+
+  This could be used to provide qmail-lspawn with different user account
+info than what qmail-getpw would normally retrieve from /etc/passwd, and
+the hostname can be used to provide virtualhosting.
+
+-Thor Kooda
+ tkooda-patch-qmail (at) devsec (dot) org
+ 2004-07-20
+
+
+diff -Naru qmail-1.03.orig/Makefile qmail-1.03/Makefile
+--- qmail-1.03.orig/Makefile	Mon Jun 15 05:53:16 1998
++++ qmail-1.03/Makefile	Tue Jul 20 22:40:48 2004
+@@ -1199,11 +1199,11 @@
+ 
+ qmail-lspawn: \
+ load qmail-lspawn.o spawn.o prot.o slurpclose.o coe.o sig.a wait.a \
+-case.a cdb.a fd.a open.a stralloc.a alloc.a substdio.a error.a str.a \
++case.a cdb.a fd.a open.a stralloc.a alloc.a substdio.a error.a env.a str.a \
+ fs.a auto_qmail.o auto_uids.o auto_spawn.o
+ 	./load qmail-lspawn spawn.o prot.o slurpclose.o coe.o \
+ 	sig.a wait.a case.a cdb.a fd.a open.a stralloc.a alloc.a \
+-	substdio.a error.a str.a fs.a auto_qmail.o auto_uids.o \
++	substdio.a error.a env.a str.a fs.a auto_qmail.o auto_uids.o \
+ 	auto_spawn.o 
+ 
+ qmail-lspawn.0: \
+diff -Naru qmail-1.03.orig/qmail-lspawn.c qmail-1.03/qmail-lspawn.c
+--- qmail-1.03.orig/qmail-lspawn.c	Mon Jun 15 05:53:16 1998
++++ qmail-1.03/qmail-lspawn.c	Tue Jul 20 23:05:08 2004
+@@ -13,6 +13,7 @@
+ #include "auto_qmail.h"
+ #include "auto_uids.h"
+ #include "qlx.h"
++#include "env.h"
+ 
+ char *aliasempty;
+ 
+@@ -74,10 +75,11 @@
+ stralloc nughde = {0};
+ stralloc wildchars = {0};
+ 
+-void nughde_get(local)
++void nughde_get(local,hostname)
+ char *local;
++char *hostname;
+ {
+- char *(args[3]);
++ char *(args[4]);
+  int pi[2];
+  int gpwpid;
+  int gpwstat;
+@@ -139,9 +141,14 @@
+   }
+ 
+  if (pipe(pi) == -1) _exit(QLX_SYS);
+- args[0] = "bin/qmail-getpw";
++ args[0] = env_get("QMAILGETPW");
+  args[1] = local;
+- args[2] = 0;
++ args[2] = hostname;
++ args[3] = 0;
++ if (!args[0]) {
++  args[0] = "bin/qmail-getpw";
++  args[2] = 0;
++ }
+  switch(gpwpid = vfork())
+   {
+    case -1:
+@@ -186,7 +193,7 @@
+ 
+    if (chdir(auto_qmail) == -1) _exit(QLX_USAGE);
+ 
+-   nughde_get(r);
++   nughde_get(r,r+at+1);
+ 
+    x = nughde.s;
+    xlen = nughde.len;

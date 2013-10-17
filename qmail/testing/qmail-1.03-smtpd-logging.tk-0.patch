@@ -1,0 +1,186 @@
+diff -Naur qmail-1.03.orig/qmail-smtpd.c qmail-1.03/qmail-smtpd.c
+--- qmail-1.03.orig/qmail-smtpd.c	Mon Jun 15 05:53:16 1998
++++ qmail-1.03/qmail-smtpd.c	Fri Mar 19 04:39:02 2004
+@@ -39,15 +39,98 @@
+ char ssoutbuf[512];
+ substdio ssout = SUBSTDIO_FDBUF(safewrite,1,ssoutbuf,sizeof ssoutbuf);
+ 
++char sslogbuf[128];
++substdio sslog = SUBSTDIO_FDBUF(safewrite,2,sslogbuf,sizeof sslogbuf);
++
++char log_pid[FMT_ULONG] = "";
++loginit() {
++   log_pid[fmt_ulong(log_pid,(unsigned long) getpid())] = 0;
++}
++void logstart() {
++  substdio_put(&sslog,"smtp ",5);
++  substdio_puts(&sslog,log_pid);
++  substdio_put(&sslog," ",1);
++}
++void logs(s) char *s; {
++  substdio_puts(&sslog,s);
++}
++void logn(s, n) char *s; int n; {
++  substdio_put(&sslog,s,n);
++}
++void logfinish() {
++  substdio_put(&sslog,"\n",1);
++  substdio_flush(&sslog);
++}
++void logfailure(permanent, qqx) int permanent; char *qqx; {
++  logstart();
++  if (permanent)
++    logn("permanent",9);
++  else
++    logn("temporary",9);
++  logn(" failure: ",10);
++  logs(qqx+1);
++  logfinish();
++}
++void log(s1) char *s1; {
++  logstart();
++  logs(s1);
++  logfinish();
++}
++void loghelo(ehlo, remotehost, remoteip, helohost)
++int ehlo; char *remotehost, *remoteip, *helohost; {
++  logstart();
++  logn(ehlo ? "ehlo" : "helo", 4);
++  logn(" from ",6);
++  logs(remotehost);
++  logn(" (",2);
++  logs(remoteip);
++  logn(")",1);
++  if (helohost) {
++    logn(" as ",4);
++    logs(helohost);
++  }
++  logfinish();
++}
++void logaddr(prompt, addr, tail)
++char *prompt, *tail; stralloc *addr; {
++  logstart();
++  logs(prompt);
++  logn(addr->s, addr->len-1);
++  logs(tail);
++  logfinish();
++}
++void logenvelope(pfrom, from, pto, rcpt, sep, tail)
++char *pfrom, *pto, *sep, *tail; stralloc *from, *rcpt; {
++  char *pos, *border;
++  logstart();
++  logs(pfrom);
++  logn(from->s, from->len-1);
++  logs(pto);
++  pos = rcpt->s + 1;
++  border = rcpt->s + rcpt->len - 1;
++  while (pos < border)
++  {
++    if (*pos) {
++      logn(pos, 1);
++      pos++;
++    } else {
++      logs(sep);
++      pos += 2;
++    }
++  }
++  logs(tail);
++  logfinish();
++}
++
+ void flush() { substdio_flush(&ssout); }
+ void out(s) char *s; { substdio_puts(&ssout,s); }
+ 
+ void die_read() { _exit(1); }
+-void die_alarm() { out("451 timeout (#4.4.2)\r\n"); flush(); _exit(1); }
+-void die_nomem() { out("421 out of memory (#4.3.0)\r\n"); flush(); _exit(1); }
+-void die_control() { out("421 unable to read controls (#4.3.0)\r\n"); flush(); _exit(1); }
++void die_alarm() { log("timeout"); out("451 timeout (#4.4.2)\r\n"); flush(); _exit(1); }
++void die_nomem() { log("out of memory"); out("421 out of memory (#4.3.0)\r\n"); flush(); _exit(1); }
++void die_control() { log("unable to read controls"); out("421 unable to read controls (#4.3.0)\r\n"); flush(); _exit(1); }
+ void die_ipme() { out("421 unable to figure out my IP addresses (#4.3.0)\r\n"); flush(); _exit(1); }
+-void straynewline() { out("451 See http://pobox.com/~djb/docs/smtplf.html.\r\n"); flush(); _exit(1); }
++void straynewline() { log("bare line feed"); out("451 See http://pobox.com/~djb/docs/smtplf.html.\r\n"); flush(); _exit(1); }
+ 
+ void err_bmf() { out("553 sorry, your envelope sender is in my badmailfrom list (#5.7.1)\r\n"); }
+ void err_nogateway() { out("553 sorry, that domain isn't in my list of allowed rcpthosts (#5.7.1)\r\n"); }
+@@ -57,7 +140,7 @@
+ void err_wantrcpt() { out("503 RCPT first (#5.5.1)\r\n"); }
+ void err_noop() { out("250 ok\r\n"); }
+ void err_vrfy() { out("252 send some mail, i'll try my best\r\n"); }
+-void err_qqt() { out("451 qqt failure (#4.3.0)\r\n"); }
++void err_qqt() { log("qqt failure"); out("451 qqt failure (#4.3.0)\r\n"); }
+ 
+ 
+ stralloc greeting = {0};
+@@ -73,6 +156,7 @@
+ }
+ void smtp_quit()
+ {
++  log("shutdown");
+   smtp_greet("221 "); out("\r\n"); flush(); _exit(0);
+ }
+ 
+@@ -226,11 +310,13 @@
+ {
+   smtp_greet("250 "); out("\r\n");
+   seenmail = 0; dohelo(arg);
++  loghelo(0,remoteip,remotehost,fakehelo?helohost.s:0);
+ }
+ void smtp_ehlo(arg) char *arg;
+ {
+   smtp_greet("250-"); out("\r\n250-PIPELINING\r\n250 8BITMIME\r\n");
+   seenmail = 0; dohelo(arg);
++  loghelo(1,remoteip,remotehost,fakehelo?helohost.s:0);
+ }
+ void smtp_rset()
+ {
+@@ -242,6 +328,7 @@
+   if (!addrparse(arg)) { err_syntax(); return; }
+   flagbarf = bmfcheck();
+   seenmail = 1;
++  if (flagbarf) logaddr("bad mail from <",&addr,">,<",">");
+   if (!stralloc_copys(&rcptto,"")) die_nomem();
+   if (!stralloc_copys(&mailfrom,addr.s)) die_nomem();
+   if (!stralloc_0(&mailfrom)) die_nomem();
+@@ -257,7 +344,11 @@
+     if (!stralloc_0(&addr)) die_nomem();
+   }
+   else
+-    if (!addrallowed()) { err_nogateway(); return; }
++    if (!addrallowed()) {
++      logaddr("relay denied to <", &addr, ">");
++      err_nogateway();
++      return;
++    }
+   if (!stralloc_cats(&rcptto,"T")) die_nomem();
+   if (!stralloc_cats(&rcptto,addr.s)) die_nomem();
+   if (!stralloc_0(&rcptto)) die_nomem();
+@@ -384,14 +475,16 @@
+   if (hops) qmail_fail(&qqt);
+   qmail_from(&qqt,mailfrom.s);
+   qmail_put(&qqt,rcptto.s,rcptto.len);
++  logenvelope("message from <",&mailfrom,"> to <", &rcptto, ">,<",">");
+  
+   qqx = qmail_close(&qqt);
+-  if (!*qqx) { acceptmessage(qp); return; }
+-  if (hops) { out("554 too many hops, this message is looping (#5.4.6)\r\n"); return; }
+-  if (databytes) if (!bytestooverflow) { out("552 sorry, that message size exceeds my databytes limit (#5.3.4)\r\n"); return; }
++  if (!*qqx) { log("message queued"); acceptmessage(qp); return; }
++  if (hops) { log("too many hops"); out("554 too many hops, this message is looping (#5.4.6)\r\n"); return; }
++  if (databytes) if (!bytestooverflow) { log("too big"); out("552 sorry, that message size exceeds my databytes limit (#5.3.4)\r\n"); return; }
+   if (*qqx == 'D') out("554 "); else out("451 ");
+   out(qqx + 1);
+   out("\r\n");
++  logfailure(*qqx == 'D', qqx+1);
+ }
+ 
+ struct commands smtpcommands[] = {
+@@ -411,6 +504,7 @@
+ void main()
+ {
+   sig_pipeignore();
++  loginit();
+   if (chdir(auto_qmail) == -1) die_control();
+   setup();
+   if (ipme_init() != 1) die_ipme();

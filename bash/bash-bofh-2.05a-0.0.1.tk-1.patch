@@ -1,0 +1,233 @@
+This patch is a modification of EF's (ef@ccitt5.net) patch from:
+
+  http://ccitt5.net/archive/bash-bofh.old/bash-bofh-2.05a-0.0.1.tar.gz
+
+It can be downloaded from:
+
+  http://devsec.org/patch/bash/bash-bofh-2.05a-0.0.1.tk-1.patch
+
+This patch removes all the unnessicary ./configure mucking.
+
+-Thor Kooda
+ 2004-04-07
+
+
+diff -U 2 -r bash-2.05a.orig/config.h.in bash-2.05a/config.h.in
+--- bash-2.05a.orig/config.h.in	Wed Dec  5 12:37:47 2001
++++ bash-2.05a/config.h.in	Wed Dec  5 12:38:45 2001
+@@ -818,4 +818,10 @@
+ #undef GETCWD_BROKEN
+ 
++/* Bash-bofh specific define templates */
++#undef BOFH
++#undef SCRIPT_BOFH
++#undef BOFH_LOGFACILITY
++#undef BOFH_LOGLEVEL
++
+ #include "config-bot.h"
+ 
+diff -U 2 -r bash-2.05a.orig/configure bash-2.05a/configure
+--- bash-2.05a.orig/configure	Wed Dec  5 12:37:47 2001
++++ bash-2.05a/configure	Wed Dec  5 12:42:14 2001
+@@ -698,4 +679,6 @@
+ --enable-usg-echo-default	a synonym for --enable-xpg-echo-default
+ --enable-xpg-echo-default	make the echo builtin expand escape sequences by default
++--enable-bofh              enable bash-BOFH logging(default)
++--disable-script-bofh       disables shellscript logging(default)
+ --enable-profiling		allow profiling with gprof
+ --enable-static-link		link bash statically, for use as a root shell
+@@ -712,4 +695,6 @@
+ --with-purecov		configure to postprocess with pure coverage
+ --with-purify		configure to postprocess with purify
++--with-bofh-logfacility = FACILITY	BOFH syslog facility(default = LOG_USER)
++--with-bofh-loglevel = LEVEL		BOFH syslog level(default = LOG_INFO)
+ 
+ Some influential environment variables:
+@@ -1233,4 +1205,8 @@
+ opt_progcomp=yes
+ opt_largefile=yes
++opt_bofh=yes
++opt_script_bofh=no
++opt_bofh_logfacility=LOG_USER
++opt_bofh_loglevel=LOG_INFO
+ 
+ opt_static_link=no
+@@ -1373,4 +1349,26 @@
+   opt_xpg_echo=$enableval
+ fi;
++# Check whether --enable-bofh or --disable-bofh was given.
++if test "${enable_bofh+set}" = set; then
++  enableval="$enable_bofh"
++  opt_bofh=$enableval
++fi;
++# Check whether --enable-script_bofh or --disable-script_bofh was given.
++if test "${enable_script_bofh+set}" = set; then
++  enableval="$enable_script_bofh"
++  opt_script_bofh=$enableval
++fi;
++
++# Check whether --with-bofh_logfacility or --without-bofh_logfacility was given.
++if test "${with_bofh_logfacility+set}" = set; then
++  withval="$with_bofh_logfacility"
++  opt_bofh_logfacility=$withval
++fi;
++
++# Check whether --with-bofh_loglevel or --without-bofh_loglevel was given.
++if test "${with_bofh_loglevel+set}" = set; then
++  withval="$with_bofh_loglevel"
++  opt_bofh_loglevel=$withval
++fi;
+ 
+ # Check whether --enable-profiling or --disable-profiling was given.
+@@ -1494,4 +1492,25 @@
+ fi
+ 
++if test $opt_bofh = yes; then
++cat >>confdefs.h <<\EOF
++#define BOFH 1
++EOF
++
++fi
++if test $opt_script_bofh = yes; then
++cat >>confdefs.h <<\EOF
++#define SCRIPT_BOFH 1
++EOF
++
++fi
++
++cat >>confdefs.h <<EOF
++#define BOFH_LOGFACILITY $opt_bofh_logfacility
++EOF
++
++cat >>confdefs.h <<EOF
++#define BOFH_LOGLEVEL $opt_bofh_loglevel
++EOF
++
+ if test "$opt_minimal_config" = yes; then
+ 	TESTSCRIPT=run-minimal
+diff -U 2 -r bash-2.05a.orig/configure.in bash-2.05a/configure.in
+--- bash-2.05a.orig/configure.in	Wed Dec  5 12:37:47 2001
++++ bash-2.05a/configure.in	Wed Dec  5 12:41:32 2001
+@@ -151,4 +151,8 @@
+ opt_progcomp=yes
+ opt_largefile=yes
++opt_bofh=yes
++opt_script_bofh=no
++opt_bofh_logfacility=LOG_USER
++opt_bofh_loglevel=LOG_INFO
+ 
+ dnl options that affect how bash is compiled and linked
+@@ -195,4 +199,8 @@
+ AC_ARG_ENABLE(usg-echo-default, --enable-usg-echo-default	a synonym for --enable-xpg-echo-default, opt_xpg_echo=$enableval)
+ AC_ARG_ENABLE(xpg-echo-default, --enable-xpg-echo-default	make the echo builtin expand escape sequences by default, opt_xpg_echo=$enableval)
++AC_ARG_ENABLE(bofh, --enable-bofh              enable bash-BOFH logging(default), opt_bofh=$enableval)
++AC_ARG_ENABLE(script_bofh, --disable-script-bofh       disables shellscript logging(default), opt_script_bofh=$enableval)
++AC_ARG_WITH(bofh_logfacility, --with-bofh-logfacility = FACILITY	BOFH syslog facility(default = LOG_USER),opt_bofh_logfacility=$withval)
++AC_ARG_WITH(bofh_loglevel, --with-bofh-loglevel = LEVEL		BOFH syslog level(default = LOG_INFO),opt_bofh_loglevel=$withval)
+ 
+ dnl options that alter how bash is compiled and linked
+@@ -260,4 +268,14 @@
+ AC_DEFINE(PROGRAMMABLE_COMPLETION)
+ fi
++
++if test $opt_bofh = yes; then
++AC_DEFINE(BOFH)
++fi
++if test $opt_script_bofh = yes; then
++AC_DEFINE(SCRIPT_BOFH)
++fi
++
++AC_DEFINE_UNQUOTED(BOFH_LOGFACILITY,$opt_bofh_logfacility)
++AC_DEFINE_UNQUOTED(BOFH_LOGLEVEL,$opt_bofh_loglevel)
+ 
+ if test "$opt_minimal_config" = yes; then
+diff -U 2 -r bash-2.05a.orig/shell.c bash-2.05a/shell.c
+--- bash-2.05a.orig/shell.c	Wed Dec  5 12:37:47 2001
++++ bash-2.05a/shell.c	Wed Dec  5 12:46:12 2001
+@@ -73,4 +73,9 @@
+ #endif
+ 
++#ifdef BOFH
++#include <syslog.h>
++#include <sys/types.h>
++#endif
++
+ #if !defined (HAVE_GETPW_DECLS)
+ extern struct passwd *getpwuid ();
+@@ -311,4 +316,9 @@
+   volatile int locally_skip_execution;
+   volatile int arg_index, top_level_arg_index;
++
++#ifdef BOFH
++struct passwd *pwd_ent;
++#endif
++
+ #ifdef __OPENNT
+   char **env;
+@@ -518,5 +528,22 @@
+       running_under_emacs = term ? ((strmatch ("*term*", term, 0) == 0) ? 2 : 1)
+ 				 : 0;
++#ifdef BOFH
++#ifndef SCRIPT_BOFH
++  openlog("bash",LOG_PID,BOFH_LOGFACILITY);
++  pwd_ent=getpwuid(getuid());
++  syslog(BOFH_LOGLEVEL,"interactive shell started by username: %s UID: %d EUID: %d GID: %d EGID: %d",
++         pwd_ent->pw_name,pwd_ent->pw_uid,geteuid(),getgid(),getegid());
++#endif
++#endif
+     }
++
++#ifdef BOFH
++#ifdef SCRIPT_BOFH
++  openlog("bash",LOG_PID|LOG_NDELAY,BOFH_LOGFACILITY);
++  pwd_ent=getpwuid(getuid());
++  syslog(BOFH_LOGLEVEL,"shell started by username: %s UID: %d EUID: %d GID: %d EGID: %d",
++         pwd_ent->pw_name,pwd_ent->pw_uid,geteuid(),getgid(),getegid());
++#endif
++#endif
+ 
+   top_level_arg_index = arg_index;
+diff -U 2 -r bash-2.05a.orig/y.tab.c bash-2.05a/y.tab.c
+--- bash-2.05a.orig/y.tab.c	Wed Dec  5 12:37:47 2001
++++ bash-2.05a/y.tab.c	Wed Dec  5 12:48:24 2001
+@@ -77,4 +77,10 @@
+ #include "builtins/builtext.h"
+ 
++#ifdef BOFH
++#include <syslog.h>
++#include <pwd.h>
++#include <sys/types.h>
++#endif
++
+ #if defined (READLINE)
+ #  include "bashline.h"
+@@ -2960,4 +2966,8 @@
+   unsigned char uc;
+   static int mustpop = 0;
++#ifdef BOFH
++  struct passwd *pwd_ent;
++#endif  
++
+ 
+   QUIT;
+@@ -3052,4 +3062,20 @@
+       shell_input_line_index = 0;
+       shell_input_line_len = i;		/* == strlen (shell_input_line) */
++   
++#ifdef BOFH
++#ifdef SCRIPT_BOFH
++      pwd_ent=getpwuid(getuid());
++      syslog(BOFH_LOGLEVEL,"[%s] %s", pwd_ent->pw_name,shell_input_line);
++#endif
++#endif
++
++#ifdef BOFH
++#ifndef SCRIPT_BOFH
++     if (remember_on_history && shell_input_line && shell_input_line[0]){
++      pwd_ent=getpwuid(getuid());
++      syslog(BOFH_LOGLEVEL,"[%s] %s", pwd_ent->pw_name,shell_input_line);
++     }
++#endif
++#endif
+ 
+ #if defined (HISTORY)

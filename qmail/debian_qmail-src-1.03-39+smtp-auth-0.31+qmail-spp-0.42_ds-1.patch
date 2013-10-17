@@ -1,0 +1,1262 @@
+  This is a patch for the qmail-1.03 source tree from the debian
+qmail-src-1.03-39 package [1].  It can be downloaded from here:
+
+  http://devsec.org/patch/qmail/
+
+
+  This patch combines the qmail-spp-0.42 patch [2], with a slightly
+modified [3] version of Krzysztof Dabrowski's qmail-smtpd-auth-0.31
+patch [4].
+
+
+[1] http://packages.debian.org/qmail-src
+
+[2] http://qmail-spp.sourceforge.net/
+
+[3] This patch will not become an open relay if the 2nd argument
+    to qmail-smtpd is forgotten (unlike Krzysztof's origional patch).
+
+[4] http://members.elysium.pl/brush/qmail-smtpd-auth/
+
+- Thor Kooda
+  2006-09-27
+
+
+diff -Naru qmail-1.03.orig/base64.c qmail-1.03/base64.c
+--- qmail-1.03.orig/base64.c	1969-12-31 18:00:00.000000000 -0600
++++ qmail-1.03/base64.c	2006-09-27 15:22:18.000000000 -0500
+@@ -0,0 +1,90 @@
++#include "base64.h"
++#include "stralloc.h"
++#include "substdio.h"
++#include "str.h"
++
++static char *b64alpha =
++  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
++#define B64PAD '='
++
++/* returns 0 ok, 1 illegal, -1 problem */
++
++int b64decode(in,l,out)
++const unsigned char *in;
++int l;
++stralloc *out; /* not null terminated */
++{
++  int i, j;
++  unsigned char a[4];
++  unsigned char b[3];
++  char *s;
++
++  if (l == 0)
++  {
++    if (!stralloc_copys(out,"")) return -1;
++    return 0;
++  }
++
++  if (!stralloc_ready(out,l + 2)) return -1; /* XXX generous */
++  s = out->s;
++
++  for (i = 0;i < l;i += 4) {
++    for (j = 0;j < 4;j++)
++      if ((i + j) < l && in[i + j] != B64PAD)
++      {
++        a[j] = str_chr(b64alpha,in[i + j]);
++        if (a[j] > 63) return 1;
++      }
++      else a[j] = 0;
++
++    b[0] = (a[0] << 2) | (a[1] >> 4);
++    b[1] = (a[1] << 4) | (a[2] >> 2);
++    b[2] = (a[2] << 6) | (a[3]);
++
++    *s++ = b[0];
++
++    if (in[i + 1] == B64PAD) break;
++    *s++ = b[1];
++
++    if (in[i + 2] == B64PAD) break;
++    *s++ = b[2];
++  }
++  out->len = s - out->s;
++  while (out->len && !out->s[out->len - 1]) --out->len; /* XXX avoid? */
++  return 0;
++}
++
++int b64encode(in,out)
++stralloc *in;
++stralloc *out; /* not null terminated */
++{
++  unsigned char a, b, c;
++  int i;
++  char *s;
++
++  if (in->len == 0)
++  {
++    if (!stralloc_copys(out,"")) return -1;
++    return 0;
++  }
++
++  if (!stralloc_ready(out,in->len / 3 * 4 + 4)) return -1;
++  s = out->s;
++
++  for (i = 0;i < in->len;i += 3) {
++    a = in->s[i];
++    b = i + 1 < in->len ? in->s[i + 1] : 0;
++    c = i + 2 < in->len ? in->s[i + 2] : 0;
++
++    *s++ = b64alpha[a >> 2];
++    *s++ = b64alpha[((a & 3 ) << 4) | (b >> 4)];
++
++    if (i + 1 >= in->len) *s++ = B64PAD;
++    else *s++ = b64alpha[((b & 15) << 2) | (c >> 6)];
++
++    if (i + 2 >= in->len) *s++ = B64PAD;
++    else *s++ = b64alpha[c & 63];
++  }
++  out->len = s - out->s;
++  return 0;
++}
+diff -Naru qmail-1.03.orig/base64.h qmail-1.03/base64.h
+--- qmail-1.03.orig/base64.h	1969-12-31 18:00:00.000000000 -0600
++++ qmail-1.03/base64.h	2006-09-27 15:22:18.000000000 -0500
+@@ -0,0 +1,7 @@
++#ifndef BASE64_H
++#define BASE64_H
++
++extern int b64decode();
++extern int b64encode();
++
++#endif
+diff -Naru qmail-1.03.orig/debian/conffiles qmail-1.03/debian/conffiles
+--- qmail-1.03.orig/debian/conffiles	2006-09-27 15:21:35.000000000 -0500
++++ qmail-1.03/debian/conffiles	2006-09-27 15:23:21.000000000 -0500
+@@ -2,3 +2,4 @@
+ /etc/qmail/users/assign
+ /etc/tcp.smtp
+ /etc/qmail/rcpthosts
++/etc/qmail/smtpplugins
+diff -Naru qmail-1.03.orig/debian/rules qmail-1.03/debian/rules
+--- qmail-1.03.orig/debian/rules	2006-09-27 15:21:35.000000000 -0500
++++ qmail-1.03/debian/rules	2006-09-27 15:24:00.000000000 -0500
+@@ -60,6 +60,7 @@
+ 	mv debian/tmp/var/qmail/alias debian/tmp/var/lib/qmail
+ 	mv debian/tmp/var/qmail/users debian/tmp/etc/qmail
+ 	echo localhost > debian/tmp/etc/qmail/rcpthosts
++	$(INSTALL) -o root -g root -m 644 debian/smtpplugins debian/tmp/etc/qmail
+ 	mv debian/tmp/var/qmail/doc/* debian/tmp/usr/share/doc/qmail
+ 	mv debian/tmp/var/qmail/boot debian/tmp/usr/share/doc/qmail/examples
+ 	rmdir debian/tmp/var/qmail/doc
+diff -Naru qmail-1.03.orig/debian/rules~ qmail-1.03/debian/rules~
+--- qmail-1.03.orig/debian/rules~	1969-12-31 18:00:00.000000000 -0600
++++ qmail-1.03/debian/rules~	2006-09-27 15:21:35.000000000 -0500
+@@ -0,0 +1,212 @@
++#!/usr/bin/make -f 
++#
++# Copyright (C) 1998 Software in the Public Interest <www.debian.org>
++
++PACKAGE	  = $(shell perl -e 'print <> =~ /(\S*)\s/' debian/changelog)
++PKG_VER	  = $(shell perl -e 'print <> =~ /\((.*)\)/' debian/changelog)
++PKG_UPVER = $(shell perl -e 'print <> =~ /\((.*)-[^-]*\)/' debian/changelog)
++INSTALL   = '/usr/bin/install'
++
++build:	checkdir
++	if fgrep QMAIL/bin *.sh >/dev/null; then \
++	    echo >&2 "You must run debian/debianize-source-tree first!"; \
++	    exit 1; \
++	fi
++	$(MAKE) -C contrib/checkpassword-0.90/
++	$(MAKE) man
++	$(MAKE)
++	# check that the local user ID's match the standard ones
++	# This has been removed.  This is because I have been forced to
++	# change the qmail uid's & gid's
++	#@diff -u debian/debian-default_uids.c auto_uids.c || ( echo -e "\nError:\n Your system has user/group ids that differ from the debian default.\n Please rectify this.  The easiest way to do this is normally to cut&paste\n the qmail sections from /etc/passwd.dpkg-dist and /etc/group.dpkg-dist,\n into /etc/passwd and /etc/group respectively (relpacing the old values).\n" ; exit 1 )
++	touch build
++
++clean:	checkdir
++	-rm -f build
++	-$(MAKE) clean
++	-$(MAKE) clean -C contrib/checkpassword-0.90/
++	-rm `find . -name "*~"`
++	-rm -rf debian/files*
++	-rm -rf `find debian/* -type d -prune`
++	find . \( -name '#*#' -o -name '*~' -o -name DEADJOE -o -name '*.orig' -o -name '*.rej' -o -name '*.bak' -o -name '.*.orig' -o -name '.*.rej' -o -name .SUMS -o -name TAGS -o -name core \) -exec rm -f {} \;
++
++binary-indep: checkroot build
++	#nothing to be done
++
++binary-arch: checkroot build
++	-rm -rf debian/substvars debian/tmp
++# Make the directory tree and copy qmail files.
++	$(INSTALL) -d debian/tmp/DEBIAN \
++		debian/tmp/etc/init.d \
++		debian/tmp/usr/share/doc/qmail \
++		debian/tmp/usr/doc \
++		debian/tmp/usr/share/doc/qmail/examples \
++		debian/tmp/var/qmail \
++		debian/tmp/etc/qmail \
++		debian/tmp/var/spool \
++		debian/tmp/var/lib \
++		debian/tmp/var/lib/qmail \
++		debian/tmp/usr/bin \
++		debian/tmp/usr/sbin \
++		debian/tmp/usr/lib \
++		debian/tmp/usr/lib/qmail
++	#./qmail-hier | ./install debian/tmp/var/qmail
++	./auto-str auto_qmail debian/tmp/var/qmail > auto_qmail.c
++	rm -f install
++	$(MAKE) install
++	./install
++	mv debian/tmp/var/qmail/queue debian/tmp/var/spool/qmail
++	#mv debian/tmp/var/qmail/control/* debian/tmp/etc/qmail
++	mv debian/tmp/var/qmail/alias debian/tmp/var/lib/qmail
++	mv debian/tmp/var/qmail/users debian/tmp/etc/qmail
++	echo localhost > debian/tmp/etc/qmail/rcpthosts
++	mv debian/tmp/var/qmail/doc/* debian/tmp/usr/share/doc/qmail
++	mv debian/tmp/var/qmail/boot debian/tmp/usr/share/doc/qmail/examples
++	rmdir debian/tmp/var/qmail/doc
++	rmdir debian/tmp/var/qmail/control
++	(cd debian/tmp/var/qmail && ln -s /var/spool/qmail queue)
++	(cd debian/tmp/var/qmail && ln -s /etc/qmail control)
++	(cd debian/tmp/var/qmail && ln -s /usr/share/doc/qmail doc)
++	(cd debian/tmp/var/qmail && ln -s /usr/share/doc/qmail/examples/boot boot)
++	(cd debian/tmp/var/qmail && ln -s /var/lib/qmail/alias alias)
++	(cd debian/tmp/var/qmail && ln -s /etc/qmail/users users)
++	(cd debian/tmp/usr/doc && ln -s /usr/share/doc/qmail qmail)
++	mv debian/tmp/var/qmail/man debian/tmp/usr/man && \
++		rm -r debian/tmp/usr/man/cat?
++# Move /var/qmail/bin programs to either /usr/bin or /usr/sbin
++	bash debian/debianize-binary-tree
++# Install checkpassword in /usr/bin
++	$(INSTALL) -o root -g root -m 755 contrib/checkpassword-0.90/checkpassword debian/tmp/usr/bin
++# Install checkpassword manpage
++	$(INSTALL) -o root -g root -m 644 contrib/checkpassword-0.90/checkpassword.8 debian/tmp/usr/man/man8
++# Install mbox2maildir in /usr/bin
++	$(INSTALL) -o root -g root -m 755 contrib/mbox2maildir/mbox2maildir debian/tmp/usr/bin
++# Create /usr/lib/sendmail symlink for backward compatibility.
++	ln -s ../sbin/sendmail debian/tmp/usr/lib/sendmail
++# Copy qmailconfig and its helper programs...
++	$(INSTALL) -o root -g root -m 755 dnsfq debian/tmp/usr/lib/qmail/qmailconfig-dnsfq
++	$(INSTALL) -o root -g root -m 755 dnsip debian/tmp/usr/lib/qmail/qmailconfig-dnsip
++	$(INSTALL) -o root -g root -m 755 ipmeprint debian/tmp/usr/lib/qmail/qmailconfig-ipmeprint
++	$(INSTALL) -o root -g root -m 755 dnsptr debian/tmp/usr/lib/qmail/qmailconfig-dnsptr
++# install qmail-procmail script
++	$(INSTALL) -o root -g root -m 755 debian/qmail-procmail debian/tmp/usr/sbin/qmail-procmail
++# install newaliases script
++	$(INSTALL) -o root -g root -m 755 debian/newaliases debian/tmp/usr/bin/newaliases
++# install eliminate-dups script
++	$(INSTALL) -o root -g root -m 755 debian/eliminate-dups debian/tmp/usr/lib/qmail/eliminate-dups
++# install default users/assign
++	$(INSTALL) -o root -g root -m 644 debian/assign debian/tmp/etc/qmail/users
++# (This one is a bit of a kludge...)
++	sed -e 's|./hostname|hostname|g' \
++	    -e 's|\./dnsptr|/usr/lib/qmail/qmailconfig-dnsptr|g' \
++	    -e 's|\./dnsip|/usr/lib/qmail/qmailconfig-dnsip|g' \
++	    -e 's|\./dnsfq|/usr/lib/qmail/qmailconfig-dnsfq|g' \
++	    -e 's|\./ipmeprint|/usr/lib/qmail/qmailconfig-ipmeprint|g' \
++		config >debian/tmp/usr/lib/qmail/qmailconfig
++	chmod 755 debian/tmp/usr/lib/qmail/qmailconfig
++# Install /etc/init.d/qmail
++	$(INSTALL) -o root -g root -m 755 debian/init.d debian/tmp/etc/init.d/qmail
++# install tcpserver conf file
++	$(INSTALL) -o root -g root -m 644 debian/tcp.smtp debian/tmp/etc
++
++# Copy /usr/share/doc/qmail files.
++	$(INSTALL) -o root -g root -m 644 debian/changelog debian/tmp/usr/share/doc/qmail/changelog.Debian
++	$(INSTALL) -m 644 -p BLURB* FAQ INTERNALS README* PIC.* \
++		SECURITY SENDMAIL SYSDEPS THANKS THOUGHTS TODO UPGRADE \
++		BIN* REMOVE* TEST* VERSION CHANGES \
++		debian/tmp/usr/share/doc/qmail/
++	$(INSTALL) -m 644 -p debian/README.debian debian/tmp/usr/share/doc/qmail/README.Debian
++	$(INSTALL) -m 644 -p debian/TODO debian/tmp/usr/share/doc/qmail/TODO.Debian
++	
++	$(INSTALL) -m 644 -p debian/ip-up.d debian/tmp/usr/share/doc/qmail/examples/ip-up.d
++	$(INSTALL) -m 644 -p debian/logcheck debian/tmp/usr/share/doc/qmail/examples/logcheck.ignore
++	
++	$(INSTALL) -p -m644 debian/changelog debian/tmp/usr/share/doc/qmail/changelog.Debian
++	$(INSTALL) -p -m644 CHANGES debian/tmp/usr/share/doc/qmail/changelog
++	-strip --remove-section=comment --remove-section=note \
++		debian/tmp/usr/bin/* debian/tmp/usr/sbin/* \
++		debian/tmp/usr/lib/*                        2>/dev/null
++	-gzip -fr debian/tmp/usr/share/doc/ debian/tmp/usr/man/
++	$(INSTALL) -m 644 -p debian/copyright debian/tmp/usr/share/doc/qmail/copyright
++# Correct permissions of binaries and manpages...
++	chmod go+rx debian/tmp/usr/*bin/*
++	chown -R root.root debian/tmp/usr/man
++	$(INSTALL) -p -m755 debian/postinst debian/preinst \
++			debian/prerm debian/postrm        debian/tmp/DEBIAN
++	$(INSTALL) -o root -g root -m 644 -p debian/conffiles debian/tmp/DEBIAN/conffiles
++
++	# Install debconf stuff
++	cp debian/qmail.config debian/tmp/DEBIAN/config
++	cp debian/qmail.templates debian/tmp/DEBIAN/templates
++	chmod 755 debian/tmp/DEBIAN/config debian/tmp/DEBIAN/templates
++	chmod u+x debian/*config
++
++	## Install logcheck files
++	#$(INSTALL) -o root -g root -d debian/tmp/etc/logcheck/ignore.d.server
++	#$(INSTALL) -m 600 debian/logcheck debian/tmp/etc/logcheck/ignore.d.server/qmail
++
++	(cd debian/tmp/var/qmail && ln -s /usr/sbin bin)
++	dpkg-shlibdeps -Tdebian/substvars debian/tmp/usr/lib/qmail/* debian/tmp/usr/sbin/* debian/tmp/usr/bin/*
++	dpkg-gencontrol -isp -pqmail -cdebian/control.real
++# And finally, build the Debian package!
++	dpkg --build debian/tmp ..
++
++# -- here are the bits for the -src package
++TMPSRC = debian/tmp-src
++
++binary-src: checkroot checkdir debian/control \
++../$(PACKAGE)_$(PKG_UPVER).orig.tar.gz \
++../$(PACKAGE)_$(PKG_VER).dsc ../$(PACKAGE)_$(PKG_VER).diff.gz
++	-rm -rf $(TMPSRC) debian/files
++	
++	$(INSTALL) -d $(TMPSRC)/DEBIAN \
++		$(TMPSRC)/usr/bin \
++		$(TMPSRC)/usr/src/$(PACKAGE)-src \
++		$(TMPSRC)/usr/share/doc/$(PACKAGE)-src
++	$(INSTALL) -m 755 debian/build-PACKAGE $(TMPSRC)/usr/bin/build-$(PACKAGE)
++	$(INSTALL) -m 0644 ../$(PACKAGE)_$(PKG_UPVER).orig.tar.gz \
++			../$(PACKAGE)_$(PKG_VER).dsc \
++			../$(PACKAGE)_$(PKG_VER).diff.gz \
++			$(TMPSRC)/usr/src/$(PACKAGE)-src/
++	sed -e "s/#PACKAGE#/$(PACKAGE)/" debian/src.postinst > $(TMPSRC)/DEBIAN/postinst
++	chmod 755 $(TMPSRC)/DEBIAN/postinst
++	sed -e "s/#PACKAGE#/$(PACKAGE)/" debian/src.prerm > $(TMPSRC)/DEBIAN/prerm
++	chmod 755 $(TMPSRC)/DEBIAN/prerm
++	cp debian/src.postrm $(TMPSRC)/DEBIAN/postrm
++	chmod 755 $(TMPSRC)/DEBIAN/postrm
++		
++	sed -e "s/#PACKAGE#/$(PACKAGE)/" debian/README-src > $(TMPSRC)/usr/share/doc/$(PACKAGE)-src/README.Debian
++	$(INSTALL) -m 0644 debian/changelog $(TMPSRC)/usr/share/doc/$(PACKAGE)-src/changelog.Debian
++	chmod 644 $(TMPSRC)/usr/share/doc/$(PACKAGE)-src/changelog.Debian
++	gzip -9fr $(TMPSRC)/usr/share/doc/
++	$(INSTALL) -m 0644 debian/copyright $(TMPSRC)/usr/share/doc/$(PACKAGE)-src/
++	# Install debconf files
++	cp debian/qmail-src.config $(TMPSRC)/DEBIAN/config
++	cp debian/qmail-src.templates $(TMPSRC)/DEBIAN/templates
++
++	dpkg-gencontrol -isp -p$(PACKAGE)-src -P$(TMPSRC)
++	chown -R root.root $(TMPSRC)
++	dpkg --build $(TMPSRC) ..
++
++debian/control: debian/control.real
++	test -f debian/control.real && sed -e "/^Package: $(PACKAGE)-src$$/b" -e "/^Package: /,/^$$/d" debian/control.real > debian/control
++
++../$(PACKAGE)_$(PKG_UPVER).orig.tar.gz:
++	@{ echo "Error: $@ missing"; exit 1; }
++
++../$(PACKAGE)_$(PKG_VER).dsc ../$(PACKAGE)_$(PKG_VER).diff.gz: debian/rules
++	debian/rules clean
++	cd ..; dpkg-source -b $(PACKAGE)-$(PKG_UPVER)
++
++binary:	binary-indep binary-arch binary-src
++
++source diff:
++	@echo >&2 'source and diff are obsolete - use dpkg-source -b'; false
++
++checkdir:
++	@test -f qmail.c -a -f debian/rules
++
++checkroot:	checkdir
++	test "`whoami`" = root
++
++.PHONY: binary binary-arch binary-indep clean checkroot
+diff -Naru qmail-1.03.orig/debian/smtpplugins qmail-1.03/debian/smtpplugins
+--- qmail-1.03.orig/debian/smtpplugins	1969-12-31 18:00:00.000000000 -0600
++++ qmail-1.03/debian/smtpplugins	2006-09-27 15:24:12.000000000 -0500
+@@ -0,0 +1,27 @@
++#
++# qmail-spp configuration file
++#
++
++# plugins to execute on client's connection
++[connection]
++
++
++# plugins to execute on HELO/EHLO commands
++[helo]
++
++
++# plugins to execute on MAIL command
++[mail]
++
++
++# plugins to execute on RCPT command
++[rcpt]
++
++
++# plugins to execute on DATA command
++[data]
++
++
++## NOTE: use below section only if your installation supports it
++# plugins to execute on AUTH command
++#[auth]
+diff -Naru qmail-1.03.orig/Makefile qmail-1.03/Makefile
+--- qmail-1.03.orig/Makefile	2006-09-27 15:21:35.000000000 -0500
++++ qmail-1.03/Makefile	2006-09-27 15:22:18.000000000 -0500
+@@ -136,6 +136,10 @@
+ compile auto_usera.c
+ 	./compile auto_usera.c
+ 
++base64.o: \
++compile base64.c base64.h stralloc.h substdio.h str.h
++	./compile base64.c
++
+ binm1: \
+ binm1.sh conf-qmail
+ 	cat binm1.sh \
+@@ -1531,17 +1535,22 @@
+ auto_split.h
+ 	./compile qmail-showctl.c
+ 
++qmail-spp.o: \
++compile qmail-spp.c readwrite.h stralloc.h substdio.h control.h str.h \
++byte.h env.h exit.h wait.h fork.h fd.h fmt.h getln.h \
++      ./compile qmail-spp.c
++
+ qmail-smtpd: \
+ load qmail-smtpd.o rcpthosts.o qregex.o commands.o timeoutread.o \
+ timeoutwrite.o ip.o ipme.o ipalloc.o control.o constmap.o received.o \
+ date822fmt.o now.o qmail.o cdb.a fd.a wait.a datetime.a getln.a \
+ open.a sig.a case.a env.a stralloc.a alloc.a strerr.a substdio.a error.a str.a \
+-fs.a auto_qmail.o socket.lib
++fs.a auto_qmail.o base64.o qmail-spp.o socket.lib
+ 	./load qmail-smtpd qregex.o rcpthosts.o commands.o timeoutread.o \
+ 	timeoutwrite.o ip.o ipme.o ipalloc.o control.o constmap.o \
+ 	received.o date822fmt.o now.o qmail.o cdb.a fd.a wait.a \
+-	datetime.a getln.a open.a sig.a case.a env.a stralloc.a \
+-	alloc.a strerr.a substdio.a error.a str.a fs.a auto_qmail.o  `cat \
++	datetime.a getln.a open.a sig.a case.a qmail-spp.o env.a stralloc.a \
++	alloc.a strerr.a substdio.a error.a str.a fs.a auto_qmail.o base64.o `cat \
+ 	socket.lib`
+ 
+ qmail-smtpd.0: \
+@@ -1551,9 +1560,10 @@
+ qmail-smtpd.o: \
+ compile qmail-smtpd.c sig.h readwrite.h stralloc.h gen_alloc.h \
+ substdio.h alloc.h auto_qmail.h control.h received.h constmap.h \
+-error.h ipme.h ip.h ipalloc.h ip.h gen_alloc.h ip.h qmail.h \
++error.h ipme.h ip.h ipalloc.h ip.h gen_alloc.h ip.h qmail.h qmail-spp.h \
+ substdio.h str.h fmt.h scan.h byte.h case.h env.h now.h datetime.h \
+-exit.h rcpthosts.h timeoutread.h timeoutwrite.h commands.h
++exit.h rcpthosts.h timeoutread.h timeoutwrite.h commands.h wait.h \
++fd.h base64.h
+ 	./compile qmail-smtpd.c
+ 
+ qmail-start: \
+diff -Naru qmail-1.03.orig/qmail-smtpd.8 qmail-1.03/qmail-smtpd.8
+--- qmail-1.03.orig/qmail-smtpd.8	2006-09-27 15:21:35.000000000 -0500
++++ qmail-1.03/qmail-smtpd.8	2006-09-27 15:22:18.000000000 -0500
+@@ -3,6 +3,10 @@
+ qmail-smtpd \- receive mail via SMTP
+ .SH SYNOPSIS
+ .B qmail-smtpd
++[
++.I checkprogram
++.I subprogram
++]
+ .SH DESCRIPTION
+ .B qmail-smtpd
+ receives mail messages via the Simple Mail Transfer Protocol (SMTP)
+@@ -23,7 +27,26 @@
+ header fields.
+ 
+ .B qmail-smtpd
+-supports ESMTP, including the 8BITMIME and PIPELINING options.
++supports ESMTP, including the 8BITMIME, PIPELINING, and AUTH options.
++
++.B qmail-smtpd
++can accept LOGIN, and PLAIN AUTH types.  It invokes
++.IR checkprogram ,
++which reads on file descriptor 3 the username, a 0 byte, the password,
++another 0 byte, and a final 0 byte.
++.I checkprogram
++invokes
++.I subprogram
++upon successful authentication, which should in turn return 0 to
++.BR qmail-smtpd ,
++effectively setting the environment variables RELAYCLIENT and TCPREMOTEINFO
++(any supplied value replaced with the authenticated username).
++.B qmail-smtpd
++will reject the authentication attempt if it receives a nonzero return
++value from
++.I checkprogram
++or
++.IR subprogram .
+ .SH TRANSPARENCY
+ .B qmail-smtpd
+ converts the SMTP newline convention into the UNIX newline convention
+@@ -218,3 +241,6 @@
+ qmail-newmrh(8),
+ qmail-queue(8),
+ qmail-remote(8)
++.SH "HISTORY"
++The patch enabling the ESMTP AUTH option is not part of the standard
++qmail-1.03 distribution.
+diff -Naru qmail-1.03.orig/qmail-smtpd.c qmail-1.03/qmail-smtpd.c
+--- qmail-1.03.orig/qmail-smtpd.c	2006-09-27 15:21:35.000000000 -0500
++++ qmail-1.03/qmail-smtpd.c	2006-09-27 15:22:18.000000000 -0500
+@@ -25,6 +25,11 @@
+ #include "commands.h"
+ #include "qregex.h"
+ #include "strerr.h"
++#include "wait.h"
++#include "fd.h"
++#include "qmail-spp.h"
++
++int spp_val;
+ 
+ #define BMCHECK_BMF 0
+ #define BMCHECK_BMFNR 1
+@@ -70,6 +75,15 @@
+ void err_vrfy(arg) char *arg; { out("252 send some mail, i'll try my best\r\n"); }
+ void err_qqt() { out("451 qqt failure (#4.3.0)\r\n"); }
+ 
++int err_child() { out("454 oops, problem with child and I can't auth (#4.3.0)\r\n"); return -1; }
++int err_fork() { out("454 oops, child won't start and I can't auth (#4.3.0)\r\n"); return -1; }
++int err_pipe() { out("454 oops, unable to open pipe and I can't auth (#4.3.0)\r\n"); return -1; }
++int err_write() { out("454 oops, unable to write pipe and I can't auth (#4.3.0)\r\n"); return -1; }
++void err_authd() { out("503 you're already authenticated (#5.5.0)\r\n"); }
++void err_authmail() { out("503 no auth during mail transaction (#5.5.0)\r\n"); }
++int err_noauth() { out("504 auth type unimplemented (#5.5.1)\r\n"); return -1; }
++int err_authabrt() { out("501 auth exchange cancelled (#5.0.0)\r\n"); return -1; }
++int err_input() { out("501 malformed auth input (#5.5.4)\r\n"); return -1; }
+ 
+ stralloc greeting = {0};
+ 
+@@ -134,6 +148,7 @@
+   if (timeout <= 0) timeout = 1;
+ 
+   if (rcpthosts_init() == -1) die_control();
++  if (spp_init() == -1) die_control();
+ 
+   bmfok = control_readfile(&bmf,"control/badmailfrom",0);
+   if (bmfok == -1) die_control();
+@@ -289,33 +304,48 @@
+ int flagbarfbmf; /* defined if seenmail */
+ int flagbarfbmt;
+ int flagbarfbhelo;
++int allowed;
+ stralloc mailfrom = {0};
+ stralloc rcptto = {0};
++char **childargs;
++int haschildargs = 0;
+ 
+ void smtp_helo(arg) char *arg;
+ {
++  if(!spp_helo(arg)) return;
+   smtp_greet("250 "); out("\r\n");
+   seenmail = 0; dohelo(arg);
+   if (bhelook) flagbarfbhelo = bmcheck(BMCHECK_BHELO);
+ }
+ void smtp_ehlo(arg) char *arg;
+ {
+-  smtp_greet("250-"); out("\r\n250-PIPELINING\r\n250 8BITMIME\r\n");
++  if(!spp_helo(arg)) return;
++  smtp_greet("250-");
++  if (haschildargs)
++  {
++    out("\r\n250-AUTH LOGIN PLAIN");
++    out("\r\n250-AUTH=LOGIN PLAIN");
++  }
++  out("\r\n250-PIPELINING\r\n250 8BITMIME\r\n");
+   seenmail = 0; dohelo(arg);
+   if (bhelook) flagbarfbhelo = bmcheck(BMCHECK_BHELO);
+ }
+ void smtp_rset(arg) char *arg;
+ {
++  spp_rset();
+   seenmail = 0;
+   out("250 flushed\r\n");
+ }
+ void smtp_mail(arg) char *arg;
+ {
+   if (!addrparse(arg)) { err_syntax(); return; }
+-  flagbarfbmf = 0; /* bmcheck is skipped for empty envelope senders */
+-  if ((bmfok) && (addr.len != 1)) flagbarfbmf = bmcheck(BMCHECK_BMF);
+-  if ((!flagbarfbmf) && (bmfnrok) && (addr.len != 1) && (!relayclient)) {
+-    flagbarfbmf = bmcheck(BMCHECK_BMFNR);
++  if (!(spp_val = spp_mail())) return;
++  if (spp_val == 1) {
++    flagbarfbmf = 0; /* bmcheck is skipped for empty envelope senders */
++    if ((bmfok) && (addr.len != 1)) flagbarfbmf = bmcheck(BMCHECK_BMF);
++    if ((!flagbarfbmf) && (bmfnrok) && (addr.len != 1) && (!relayclient)) {
++      flagbarfbmf = bmcheck(BMCHECK_BMFNR);
++    }
+   }
+   seenmail = 1;
+   if (!stralloc_copys(&rcptto,"")) die_nomem();
+@@ -345,13 +375,18 @@
+     err_bmt();
+     return;
+   }
++  if (!relayclient) allowed = addrallowed();
++  else allowed = 1;
++  if (!(spp_val = spp_rcpt(allowed))) return;
+   if (relayclient) {
+     --addr.len;
+     if (!stralloc_cats(&addr,relayclient)) die_nomem();
+     if (!stralloc_0(&addr)) die_nomem();
+   }
+-  else
+-    if (!addrallowed()) { err_nogateway(); return; }
++  else if (spp_val == 1) {
++    if (!allowed) { err_nogateway(); return; }
++  }
++  spp_rcpt_accepted();
+   if (!stralloc_cats(&rcptto,"T")) die_nomem();
+   if (!stralloc_cats(&rcptto,addr.s)) die_nomem();
+   if (!stralloc_0(&rcptto)) die_nomem();
+@@ -466,6 +501,7 @@
+  
+   if (!seenmail) { err_wantmail(); return; }
+   if (!rcptto.len) { err_wantrcpt(); return; }
++  if (!spp_data()) return;
+   seenmail = 0;
+   if (databytes) bytestooverflow = databytes + 1;
+   if (qmail_open(&qqt) == -1) { err_qqt(); return; }
+@@ -473,6 +509,8 @@
+   out("354 go ahead\r\n");
+  
+   received(&qqt,"SMTP",local,remoteip,remotehost,remoteinfo,fakehelo);
++  qmail_put(&qqt,sppheaders.s,sppheaders.len); /* set in qmail-spp.c */
++  spp_rset();
+   blast(&hops);
+   hops = (hops >= MAXHOPS);
+   if (hops) qmail_fail(&qqt);
+@@ -488,10 +526,181 @@
+   out("\r\n");
+ }
+ 
++
++char unique[FMT_ULONG + FMT_ULONG + 3];
++static stralloc authin = {0};
++static stralloc user = {0};
++static stralloc pass = {0};
++static stralloc resp = {0};
++static stralloc slop = {0};
++substdio ssup;
++char upbuf[128];
++int authd = 0;
++
++int authgetl(void) {
++  int i;
++
++  if (!stralloc_copys(&authin, "")) die_nomem();
++
++  for (;;) {
++    if (!stralloc_readyplus(&authin,1)) die_nomem(); /* XXX */
++    i = substdio_get(&ssin,authin.s + authin.len,1);
++    if (i != 1) die_read();
++    if (authin.s[authin.len] == '\n') break;
++    ++authin.len;
++  }
++
++  if (authin.len > 0) if (authin.s[authin.len - 1] == '\r') --authin.len;
++  authin.s[authin.len] = 0;
++
++  if (*authin.s == '*' && *(authin.s + 1) == 0) { return err_authabrt(); }
++  if (authin.len == 0) { return err_input(); }
++  return authin.len;
++}
++
++int authenticate(void)
++{
++  int child;
++  int wstat;
++  int pi[2];
++
++  if (!stralloc_0(&user)) die_nomem();
++  if (!stralloc_0(&pass)) die_nomem();
++  if (!stralloc_0(&resp)) die_nomem();
++
++  if (fd_copy(2,1) == -1) return err_pipe();
++  close(3);
++  if (pipe(pi) == -1) return err_pipe();
++  if (pi[0] != 3) return err_pipe();
++  switch(child = fork()) {
++    case -1:
++      return err_fork();
++    case 0:
++      close(pi[1]);
++      sig_pipedefault();
++      execvp(*childargs, childargs);
++      _exit(1);
++  }
++  close(pi[0]);
++
++  substdio_fdbuf(&ssup,write,pi[1],upbuf,sizeof upbuf);
++  if (substdio_put(&ssup,user.s,user.len) == -1) return err_write();
++  if (substdio_put(&ssup,pass.s,pass.len) == -1) return err_write();
++  if (substdio_put(&ssup,resp.s,resp.len) == -1) return err_write();
++  if (substdio_flush(&ssup) == -1) return err_write();
++
++  close(pi[1]);
++  byte_zero(pass.s,pass.len);
++  byte_zero(upbuf,sizeof upbuf);
++  if (wait_pid(&wstat,child) == -1) return err_child();
++  if (wait_crashed(wstat)) return err_child();
++  if (wait_exitcode(wstat)) { sleep(5); return 1; } /* no */
++  return 0; /* yes */
++}
++
++int auth_login(arg) char *arg;
++{
++  int r;
++
++  if (*arg) {
++    if (r = b64decode(arg,str_len(arg),&user) == 1) return err_input();
++  }
++  else {
++    out("334 VXNlcm5hbWU6\r\n"); flush(); /* Username: */
++    if (authgetl() < 0) return -1;
++    if (r = b64decode(authin.s,authin.len,&user) == 1) return err_input();
++  }
++  if (r == -1) die_nomem();
++
++  out("334 UGFzc3dvcmQ6\r\n"); flush(); /* Password: */
++
++  if (authgetl() < 0) return -1;
++  if (r = b64decode(authin.s,authin.len,&pass) == 1) return err_input();
++  if (r == -1) die_nomem();
++
++  if (!user.len || !pass.len) return err_input();
++  return authenticate();  
++}
++
++int auth_plain(arg) char *arg;
++{
++  int r, id = 0;
++
++  if (*arg) {
++    if (r = b64decode(arg,str_len(arg),&slop) == 1) return err_input();
++  }
++  else {
++    out("334 \r\n"); flush();
++    if (authgetl() < 0) return -1;
++    if (r = b64decode(authin.s,authin.len,&slop) == 1) return err_input();
++  }
++  if (r == -1 || !stralloc_0(&slop)) die_nomem();
++  while (slop.s[id]) id++; /* ignore authorize-id */
++
++  if (slop.len > id + 1)
++    if (!stralloc_copys(&user,slop.s + id + 1)) die_nomem();
++  if (slop.len > id + user.len + 2)
++    if (!stralloc_copys(&pass,slop.s + id + user.len + 2)) die_nomem();
++
++  if (!user.len || !pass.len) return err_input();
++  return authenticate();
++}
++
++struct authcmd {
++  char *text;
++  int (*fun)();
++} authcmds[] = {
++  { "login", auth_login }
++, { "plain", auth_plain }
++, { 0, err_noauth }
++};
++
++void smtp_auth(arg)
++char *arg;
++{
++  int i;
++  char *cmd = arg;
++
++  if (!haschildargs)
++  {
++    out("503 auth not available (#5.3.3)\r\n");
++    return;
++  }
++  if (authd) { err_authd(); return; }
++  if (seenmail) { err_authmail(); return; }
++
++  if (!stralloc_copys(&user,"")) die_nomem();
++  if (!stralloc_copys(&pass,"")) die_nomem();
++  if (!stralloc_copys(&resp,"")) die_nomem();
++
++  i = str_chr(cmd,' ');   
++  arg = cmd + i;
++  while (*arg == ' ') ++arg;
++  cmd[i] = 0;
++
++  for (i = 0;authcmds[i].text;++i)
++    if (case_equals(authcmds[i].text,cmd)) break;
++
++  switch (authcmds[i].fun(arg)) {
++    case 0:
++      if (!spp_auth(authcmds[i].text, user.s)) return;
++      authd = 1;
++      relayclient = "";
++      remoteinfo = user.s;
++      if (!env_unset("TCPREMOTEINFO")) die_read();
++      if (!env_put2("TCPREMOTEINFO",remoteinfo)) die_nomem();
++      out("235 ok, go ahead (#2.0.0)\r\n");
++      break;
++    case 1:
++      out("535 authorization failed (#5.7.0)\r\n");
++  }
++}
++
+ struct commands smtpcommands[] = {
+   { "rcpt", smtp_rcpt, 0 }
+ , { "mail", smtp_mail, 0 }
+ , { "data", smtp_data, flush }
++, { "auth", smtp_auth, flush }
+ , { "quit", smtp_quit, flush }
+ , { "helo", smtp_helo, flush }
+ , { "ehlo", smtp_ehlo, flush }
+@@ -502,14 +711,24 @@
+ , { 0, err_unimpl, flush }
+ } ;
+ 
+-void main()
+-{
++void main(argc,argv)
++int argc;
++char **argv;
++{
++  if (argc == 3)
++  {
++    haschildargs = 1;
++    childargs = argv + 1;
++  }
++  
+   sig_pipeignore();
+   if (chdir(auto_qmail) == -1) die_control();
+   setup();
+   if (ipme_init() != 1) die_ipme();
++  if (spp_connect()) {
+   smtp_greet("220 ");
+   out(" ESMTP\r\n");
++  }
+   if (commands(&ssin,&smtpcommands) == 0) die_read();
+   die_nomem();
+ }
+diff -Naru qmail-1.03.orig/qmail-spp.c qmail-1.03/qmail-spp.c
+--- qmail-1.03.orig/qmail-spp.c	1969-12-31 18:00:00.000000000 -0600
++++ qmail-1.03/qmail-spp.c	2006-09-27 15:22:18.000000000 -0500
+@@ -0,0 +1,259 @@
++/*
++ * Copyright (C) 2004-2005 Pawel Foremski <pjf@asn.pl>
++ *
++ * This program is free software; you can redistribute it and/or 
++ * modify it under the terms of the GNU General Public License 
++ * as published by the Free Software Foundation; either 
++ * version 2 of the License, or (at your option) any later 
++ * version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software Foundation,
++ * Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ *
++ *** Note
++ *
++ * This is the core of qmail-spp patch for qmail
++ *
++ * Why I made it a separate file? Because I wanted qmail-spp to apply more
++ * cleanly on heavily patched qmail sources and to make it bit simpler to
++ * maintain, so don't treat it as a library.
++ *
++ * "..." comments marks places where code for other SMTP commands should be
++ * added, if needed.
++ *
++ */
++
++#include "readwrite.h"
++#include "stralloc.h"
++#include "substdio.h"
++#include "control.h"
++#include "str.h"
++#include "byte.h"
++#include "env.h"
++#include "exit.h"
++#include "wait.h"
++#include "fork.h"
++#include "fd.h"
++#include "fmt.h"
++#include "getln.h"
++
++/* stuff needed from qmail-smtpd */
++extern void flush();
++extern void out();
++extern void die_nomem();
++extern stralloc addr;
++/* *** */
++
++stralloc sppheaders = {0};
++static int spprun = 0;
++static int sppfok = 0;
++static int sppret;
++static stralloc sppf = {0};
++static stralloc plugins_dummy = {0}, plugins_connect = {0}, plugins_helo = {0}, plugins_mail = {0},
++                plugins_rcpt = {0}, plugins_data = {0}, plugins_auth = {0}; /* ... */
++static stralloc error_mail = {0}, error_rcpt = {0}, error_data = {0}; /* ... */
++static stralloc sppmsg = {0};
++static char rcptcountstr[FMT_ULONG];
++static unsigned long rcptcount;
++static unsigned long rcptcountall;
++static substdio ssdown;
++static char downbuf[128];
++
++static void err_spp(s1, s2) char *s1, *s2; { out("451 qmail-spp failure: "); out(s1); out(": "); out(s2); out(" (#4.3.0)\r\n"); }
++
++int spp_init()
++{
++  int i, len = 0;
++  stralloc *plugins_to;
++  char *x, *conffile = "control/smtpplugins";
++
++  if (!env_get("NOSPP")) {
++    spprun = 1;
++    plugins_to = &plugins_dummy;
++    x = env_get("SPPCONFFILE");
++    if (x && *x) conffile = x;
++    sppfok = control_readfile(&sppf, conffile, 0);
++    if (sppfok != 1) return -1;
++    for (i = 0; i < sppf.len; i += len) {
++      len = str_len(sppf.s + i) + 1;
++      if (sppf.s[i] == '[')
++        switch (sppf.s[i + 1]) {
++          case 'c': plugins_to = &plugins_connect; break;
++          case 'h': plugins_to = &plugins_helo; break;
++          case 'm': plugins_to = &plugins_mail; break;
++          case 'r': plugins_to = &plugins_rcpt; break;
++          case 'd': plugins_to = &plugins_data; break;
++          case 'a': plugins_to = &plugins_auth; break;
++          /* ... */
++          default: plugins_to = &plugins_dummy;
++        }
++      else
++        if (!stralloc_catb(plugins_to, sppf.s + i, len)) die_nomem();
++    }
++  }
++
++  return 0;
++}
++
++void sppout() { if (sppmsg.len) out(sppmsg.s); out("\r\n"); }
++
++int spp(plugins, addrenv) stralloc *plugins; char *addrenv;
++{
++  static int pipes[2];
++  static int i, pid, wstat, match, last;
++  static stralloc data = {0};
++  static char *(args[4]);
++  static stralloc *errors_to;
++
++  if (!spprun) return 1;
++  if (addrenv) if (!env_put2(addrenv, addr.s)) die_nomem();
++  last = 0;
++
++  for (i = 0; i < plugins->len; i += str_len(plugins->s + i) + 1) {
++    if (plugins->s[i] == ':')
++      { args[0] = "/bin/sh"; args[1] = "-c"; args[2] = plugins->s + i + 1; args[3] = 0; }
++    else
++      { args[0] = plugins->s + i; args[1] = 0; }
++
++    if (pipe(pipes) == -1)
++      { err_spp(plugins->s + i, "can't pipe()"); return 0; }
++
++    switch (pid = vfork()) {
++      case -1:
++        err_spp(plugins->s + i, "vfork() failed");
++        return 0;
++      case 0:
++        close(0); close(pipes[0]); fd_move(1, pipes[1]);
++        execv(*args, args);
++        _exit(120);
++    }
++
++    close(pipes[1]);
++    substdio_fdbuf(&ssdown, read, pipes[0], downbuf, sizeof(downbuf));
++    do {
++      if (getln(&ssdown, &data, &match, '\n') == -1) die_nomem();
++      if (data.len > 1) {
++        data.s[data.len - 1] = 0;
++        switch (data.s[0]) {
++          case 'H':
++            if (!stralloc_catb(&sppheaders, data.s + 1, data.len - 2)) die_nomem();
++            if (!stralloc_append(&sppheaders, "\n")) die_nomem();
++            break;
++          case 'C':
++            if (addrenv) {
++              if (!stralloc_copyb(&addr, data.s + 1, data.len - 1)) die_nomem();
++              if (!env_put2(addrenv, addr.s)) die_nomem();
++            }
++            break;
++          case 'S': if (!env_put(data.s + 1)) die_nomem(); break;
++          case 'U': if (!env_unset(data.s + 1)) die_nomem(); break;
++          case 'A': spprun = 0;
++          case 'O':
++          case 'N':
++          case 'D': last = 1; match = 0; break;
++          case 'E':
++          case 'R': last = 1; match = 0;
++          case 'P': out(data.s + 1); out("\r\n"); break;
++          case 'L':
++            switch (data.s[1]) {
++              case 'M': errors_to = &error_mail; break;
++              case 'R': errors_to = &error_rcpt; break;
++              case 'D': errors_to = &error_data; break;
++              /* ... */
++              default: errors_to = 0;
++            }
++            if (errors_to) {
++              if (!stralloc_catb(errors_to, data.s + 2, data.len - 3)) die_nomem();
++              if (!stralloc_catb(errors_to, "\r\n", 2)) die_nomem();
++            }
++            break;
++        }
++      }
++    } while (match);
++
++    close(pipes[0]);
++    if (wait_pid(&wstat,pid) == -1) { err_spp(plugins->s + i, "wait_pid() failed"); return 0; }
++    if (wait_crashed(wstat)) { err_spp(plugins->s + i, "child crashed"); return 0; }
++    if (wait_exitcode(wstat) == 120) { err_spp(plugins->s + i, "can't execute"); return 0; }
++
++    if (last)
++      switch (*data.s) {
++        case 'E': return 0;
++        case 'A':
++        case 'N': return 1;
++        case 'O': return 2;
++        case 'R':
++        case 'D': flush(); _exit(0);
++      }
++  }
++
++  return 1;
++}
++
++int spp_errors(errors) stralloc *errors;
++{
++  if (!errors->len) return 1;
++  if (!stralloc_0(errors)) die_nomem();
++  out(errors->s);
++  return 0;
++}
++
++int spp_connect() { return spp(&plugins_connect, 0); }
++
++int spp_helo(arg) char *arg;
++{
++  if (!env_put2("SMTPHELOHOST", arg)) die_nomem();
++  return spp(&plugins_helo, 0);
++}
++
++void spp_rset()
++{ 
++  if (!stralloc_copys(&sppheaders, "")) die_nomem();
++  if (!stralloc_copys(&error_mail, "")) die_nomem();
++  if (!stralloc_copys(&error_rcpt, "")) die_nomem();
++  if (!stralloc_copys(&error_data, "")) die_nomem();
++  /* ... */
++  rcptcount = rcptcountall = 0;
++}
++
++int spp_mail()
++{
++  if (!spp_errors(&error_mail)) return 0;
++  rcptcount = rcptcountall = 0;
++  return spp(&plugins_mail, "SMTPMAILFROM");
++}
++
++int spp_rcpt(allowed) int allowed;
++{
++  if (!spp_errors(&error_rcpt)) return 0;
++  rcptcountstr[fmt_ulong(rcptcountstr, rcptcount)] = 0;
++  if (!env_put2("SMTPRCPTCOUNT", rcptcountstr)) die_nomem();
++  rcptcountstr[fmt_ulong(rcptcountstr, ++rcptcountall)] = 0;
++  if (!env_put2("SMTPRCPTCOUNTALL", rcptcountstr)) die_nomem();
++  if (!env_put2("SMTPRCPTHOSTSOK", allowed ? "1" : "0")) die_nomem();
++  sppret = spp(&plugins_rcpt, "SMTPRCPTTO");
++  return sppret;
++}
++
++void spp_rcpt_accepted() { rcptcount++; }
++
++int spp_data()
++{
++  if (!spp_errors(&error_data)) return 0;
++  return spp(&plugins_data, 0);
++}
++
++int spp_auth(method, user) char *method, *user;
++{
++  if (!env_put2("SMTPAUTHMETHOD", method)) die_nomem();
++  if (!env_put2("SMTPAUTHUSER", user)) die_nomem();
++  return spp(&plugins_auth, 0);
++}
++
++/* ... */
+diff -Naru qmail-1.03.orig/qmail-spp.h qmail-1.03/qmail-spp.h
+--- qmail-1.03.orig/qmail-spp.h	1969-12-31 18:00:00.000000000 -0600
++++ qmail-1.03/qmail-spp.h	2006-09-27 15:22:18.000000000 -0500
+@@ -0,0 +1,14 @@
++#ifndef QMAIL_SPP_H
++#define QMAIL_SPP_H
++
++extern stralloc sppheaders;
++extern int spp_init();
++extern int spp_connect();
++extern int spp_helo();
++extern void spp_rset();
++extern int spp_mail();
++extern int spp_rcpt();
++extern int spp_data();
++extern int spp_auth();
++
++#endif
+diff -Naru qmail-1.03.orig/README.auth qmail-1.03/README.auth
+--- qmail-1.03.orig/README.auth	1969-12-31 18:00:00.000000000 -0600
++++ qmail-1.03/README.auth	2006-09-27 15:22:18.000000000 -0500
+@@ -0,0 +1,129 @@
++This patch adds ESMTP AUTH authentication protocol support to
++qmail-1.03.  It's originally based on Mrs. Brisby's smtp-auth patch
++with many enhancements from Krzysztof Dabrowski <brush@elysium.pl>
++and Eric M. Johnston <emj@postal.net>.
++
++It has since been changed to only include LOGIN and PLAIN auth, and
++handle missing args to qmail-smtp more gracefully.
++
++---
++
++Detailed patch information:
++
++This patch adds the ESMTP AUTH option to qmail-1.03, allowing the
++LOGIN, and PLAIN AUTH types. An appropriate checkpassword tool is
++necessary to support the authentication.  See
++http://cr.yp.to/checkpwd.html for more information on the interface.
++Note that the checkpassword tool should support all of the AUTH types
++advertised by qmail-smtpd.
++
++As reflected in the modified qmail-smtpd(8) man page, qmail-smtpd
++must be invoked with two arguments: checkprogram, and subprogram.
++If either of these arguments are missing, qmail-smtpd will not
++advertise availability of AUTH, and will not be able to AUTH.
++
++qmail-smtpd invokes checkprogram, feeding it the username and
++password.  If the user is permitted, checkprogram invokes subprogram,
++which just has to exit with a status of 0 for the user to
++be authenticated.  Otherwise, checkprogram exits with a non-zero
++status.  subprogram can usually be /usr/bin/true (or /bin/true,
++depending on your flavor of OS).
++
++If the user is successfully authenticated, the RELAYCLIENT
++environment variable is effectively set for the SMTP session, and
++the TCPREMOTEINFO environment variable is set to the authenticated
++username, overriding any value that tcpserver may have set.  The
++value of TCPREMOTEINFO is reflected in a Received header.
++
++
++How to install it:
++
++Simply patch your qmail-1.03 distribution with the included patch
++file and recompile & install like usual.
++
++From within the qmail-1.03 source dir:
++
++  patch -p1 < ../qmail_smtp-auth_login+plain_0.1.patch
++
++Install qmail normally, with the exception of the new arguments
++to qmail-smtpd described elsewhere in this file.
++
++
++How to use it:
++
++If you're running qmail-smtpd from inetd, you'll want to do the
++following:
++
++smtp stream tcp nowait qmaild /var/qmail/bin/tcp-env tcp-env \
++/var/qmail/bin/qmail-smtpd /usr/bin/checkpassword /bin/true
++
++The first argument to qmail-smtpd is your checkpassword utility.
++The second argument is the executable that the checkpassword utility
++execs when authentication is successful.  (Note that the location of
++"true" is OS dependent: you may need /usr/bin/true.)
++
++Invocations using tcpserver will require analagous changes.  Give
++your inetd a kill -HUP or restart tcpserver and away you go.
++
++
++Caveats:
++
++Please note that as authentication needs vary wildly across
++installations, no effort has been made to make this patch work ``out
++of the box.''  You'll have to procure or develop your own
++checkpassword program.
++
++This patch has been generated against the stock qmail 1.03
++distribution.  The results of combining this patch with others are
++unknown.
++
++
++Features:
++
++This patch supports the following auth methods: LOGIN, and PLAIN.
++
++
++Compatibility:
++
++The following MUA's are confirmed to work with this patch:
++
++Eudora 4.2.2		-	CRAM-MD5
++Eudora 5.0.2 		- 	CRAM-MD5
++The Bat 1.39		-	LOGIN & CRAM-MD5
++Outlook Express 4	- 	LOGIN
++Outlook Express 5	-	LOGIN
++Outlook 2000 		- 	LOGIN
++Netscape 4.x		-	LOGIN & PLAIN
++Netscape 4.0x		-	LOGIN
++Pegasus Mail 3.1x	-	CRAM-MD5
++
++
++Various compatibility issues:
++
++Testing with Pegasus Mail 3.1 revealed that it requires the new style
++(RFC recommended) greeting message.  Both styles are now enabled to
++maintain the highest degree of compatibility with various clients.
++This fix was suggested by David Harris <David.Harris@pmail.gen.nz>,
++the developer of Pegasus Mail.
++
++
++Acknowledgments:
++
++This patch is based on work by Krzysztof Dabrowski at
++http://members.elysium.pl/brush/qmail-smtpd-auth/ and ``Mrs. Brisby''
++at http://www.nimh.org/hacks/qmail-smtpd.c which has been further
++developed by Eric M. Johnston <emj@postal.net>.
++
++---
++
++THIS SOFTWARE IS IN THE PUBLIC DOMAIN, IS PROVIDED BY THE AUTHOR
++``AS IS,'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR BE
++LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
++BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
++WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
++OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
++EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+diff -Naru qmail-1.03.orig/TARGETS qmail-1.03/TARGETS
+--- qmail-1.03.orig/TARGETS	2006-09-27 15:21:35.000000000 -0500
++++ qmail-1.03/TARGETS	2006-09-27 15:22:18.000000000 -0500
+@@ -250,6 +250,7 @@
+ qmail-qmtpd.o
+ rcpthosts.o
+ qmail-qmtpd
++base64.o
+ qmail-smtpd.o
+ qmail-smtpd
+ qregex.o

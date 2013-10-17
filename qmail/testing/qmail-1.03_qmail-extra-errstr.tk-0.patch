@@ -1,0 +1,129 @@
+  This is a patch for qmail-1.03 that lets you specify additional error
+messages via environment variables to be used by qmail.  It can be
+downloaded from here:
+
+  http://devsec.org/patch/qmail/
+
+  You can set QMAIL_EXTRA_ERRSTR_nn (where "nn" is between 35 and 39
+for permanent errors, and between 40 and 44 for temporary errors; as
+long as the first character of the strings are "D" for permanent errors,
+and "Z" for temporary errors) to define additional error strings that
+qmail will return.
+
+  For example; you could set this variable in your qmail-smtpd
+environment:
+
+  QMAIL_EXTRA_ERRSTR_35="Dmessage rejected, no viruses allowed"
+
+..and have your qmail-queue program exit(35) if it detects a virus.
+
+- Thor Kooda
+  2007-03-06
+
+
+diff -Naru qmail-1.03.orig/Makefile qmail-1.03/Makefile
+--- qmail-1.03.orig/Makefile	2007-01-10 19:42:48.000000000 -0600
++++ qmail-1.03/Makefile	2007-03-06 23:13:13.000000000 -0600
+@@ -1633,16 +1633,16 @@
+ 
+ qmail.o: \
+ compile qmail.c substdio.h readwrite.h wait.h exit.h fork.h fd.h \
+-qmail.h substdio.h auto_qmail.h
++qmail.h substdio.h auto_qmail.h fmt.h
+ 	./compile qmail.c
+ 
+ qreceipt: \
+ load qreceipt.o headerbody.o hfield.o quote.o token822.o qmail.o \
+ getln.a fd.a wait.a sig.a env.a stralloc.a alloc.a substdio.a error.a \
+-str.a auto_qmail.o
++str.a auto_qmail.o fmt_str.o fmt_ulong.o
+ 	./load qreceipt headerbody.o hfield.o quote.o token822.o \
+ 	qmail.o getln.a fd.a wait.a sig.a env.a stralloc.a alloc.a \
+-	substdio.a error.a str.a auto_qmail.o 
++	substdio.a error.a str.a auto_qmail.o fmt_str.o fmt_ulong.o
+ 
+ qreceipt.0: \
+ qreceipt.1
+@@ -1652,7 +1652,7 @@
+ compile qreceipt.c sig.h env.h substdio.h stralloc.h gen_alloc.h \
+ subfd.h substdio.h getln.h alloc.h str.h hfield.h token822.h \
+ gen_alloc.h error.h gen_alloc.h gen_allocdefs.h headerbody.h exit.h \
+-open.h quote.h qmail.h substdio.h
++open.h quote.h qmail.h substdio.h fmt.h
+ 	./compile qreceipt.c
+ 
+ qsmhook: \
+diff -Naru qmail-1.03.orig/qmail.c qmail-1.03/qmail.c
+--- qmail-1.03.orig/qmail.c	2007-01-10 19:42:48.000000000 -0600
++++ qmail-1.03/qmail.c	2007-03-06 23:42:29.000000000 -0600
+@@ -7,6 +7,7 @@
+ #include "qmail.h"
+ #include "auto_qmail.h"
+ #include "env.h"
++#include "fmt.h"
+ 
+ static char *binqqargs[2] = { 0, 0 } ;
+ 
+@@ -88,11 +89,32 @@
+   qmail_put(qq,"",1);
+ }
+ 
++char *qmail_extra_errstr( exitcode )
++int exitcode;
++{
++  char temp[ sizeof( QMAIL_EXTRA_ERRSTR ) + FMT_ULONG ];
++  unsigned int len;
++  char *x;
++
++  if ( ( exitcode < 35 ) || ( exitcode > 44 ) ) return 0;
++  
++  len = fmt_str( temp, QMAIL_EXTRA_ERRSTR );
++  len += fmt_ulong( temp + len, (unsigned long) exitcode );
++  temp[ len ] = 0;
++  
++  x = env_get( temp );
++  if ( ( exitcode >= 35 ) && ( exitcode <= 39 ) && ( *x == 'D' ) ) return x;
++  if ( ( exitcode >= 40 ) && ( exitcode <= 44 ) && ( *x == 'Z' ) ) return x;
++  
++  return 0;
++}
++
+ char *qmail_close(qq)
+ struct qmail *qq;
+ {
+   int wstat;
+   int exitcode;
++  char *x;
+ 
+   qmail_put(qq,"",1);
+   if (!qq->flagerr) if (substdio_flush(&qq->ss) == -1) qq->flagerr = 1;
+@@ -104,6 +126,9 @@
+     return "Zqq crashed (#4.3.0)";
+   exitcode = wait_exitcode(wstat);
+ 
++  x = qmail_extra_errstr( exitcode );
++  if (x) return x;
++
+   switch(exitcode) {
+     case 115: /* compatibility */
+     case 11: return "Denvelope address too long for qq (#5.1.3)";
+diff -Naru qmail-1.03.orig/qmail.h qmail-1.03/qmail.h
+--- qmail-1.03.orig/qmail.h	1998-06-15 05:53:16.000000000 -0500
++++ qmail-1.03/qmail.h	2007-03-06 23:42:48.000000000 -0600
+@@ -3,6 +3,8 @@
+ 
+ #include "substdio.h"
+ 
++#define QMAIL_EXTRA_ERRSTR "QMAIL_EXTRA_ERRSTR_"
++
+ struct qmail {
+   int flagerr;
+   unsigned long pid;
+@@ -18,6 +20,7 @@
+ extern void qmail_from();
+ extern void qmail_to();
+ extern void qmail_fail();
++extern char *qmail_extra_errstr();
+ extern char *qmail_close();
+ extern unsigned long qmail_qp();
+ 

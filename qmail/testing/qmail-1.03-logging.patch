@@ -1,0 +1,513 @@
+diff -rc qmail-1.03-orig/qmail-pop3d.c qmail-1.03/qmail-pop3d.c
+*** qmail-1.03-orig/qmail-pop3d.c	Thu Mar 29 13:57:02 2001
+--- qmail-1.03/qmail-pop3d.c	Thu May 31 11:57:06 2001
+***************
+*** 16,21 ****
+--- 16,22 ----
+  #include "readwrite.h"
+  #include "timeoutread.h"
+  #include "timeoutwrite.h"
++ #include "env.h"
+  
+  void die() { _exit(0); }
+  
+***************
+*** 41,46 ****
+--- 42,76 ----
+  char ssinbuf[128];
+  substdio ssin = SUBSTDIO_FDBUF(saferead,0,ssinbuf,sizeof ssinbuf);
+  
++ char sslogbuf[128];
++ substdio sslog = SUBSTDIO_FDBUF(safewrite,2,sslogbuf,sizeof sslogbuf);
++ 
++ char log_pid[FMT_ULONG] = "";
++ char *log_user;
++ loginit() {
++    log_pid[fmt_ulong(log_pid,(unsigned long) getpid())] = 0;
++    log_user = env_get("USER");
++    if (!log_user) log_user = "unknown user";
++ }
++ void logstart() {
++   substdio_put(&sslog,"pop3 ",5);
++   substdio_puts(&sslog,log_pid);
++   substdio_put(&sslog," <",2);
++   substdio_puts(&sslog,log_user);
++   substdio_put(&sslog,"> ",2);
++ }
++ void logs(s) char *s; {
++   substdio_puts(&sslog,s);
++ }
++ void logn(s,n) char *s; int n; {
++   substdio_put(&sslog,s,n);
++ }
++ void logfinish()
++ {
++   substdio_put(&sslog,"\n",1);
++   substdio_flush(&sslog);
++ }
++ 
+  void put(buf,len) char *buf; int len;
+  {
+    substdio_put(&ssout,buf,len);
+***************
+*** 59,64 ****
+--- 89,98 ----
+    puts(s);
+    puts("\r\n");
+    flush();
++ 
++   logstart();
++   logs(s);
++   logfinish();
+  }
+  
+  void die_nomem() { err("out of memory"); die(); }
+***************
+*** 146,160 ****
+    }
+  }
+  
+  void pop3_stat()
+  {
+    int i;
+    unsigned long total;
+   
+    total = 0;
+!   for (i = 0;i < numm;++i) if (!m[i].flagdeleted) total += m[i].size;
+    puts("+OK ");
+!   put(strnum,fmt_uint(strnum,numm));
+    puts(" ");
+    put(strnum,fmt_ulong(strnum,total));
+    puts("\r\n");
+--- 180,220 ----
+    }
+  }
+  
++ void pop3_startup()
++ {
++   int i;
++   unsigned long total;
++  
++   total = 0;
++   for (i = 0;i < numm;++i) total += m[i].size;
++   puts("+OK ");
++   logstart();
++   i=fmt_uint(strnum,numm);
++   put(strnum,i);
++   logs(strnum,i);
++   puts(" ");
++   i=fmt_ulong(strnum,total);
++   put(strnum,i);
++   puts("\r\n");
++   flush();
++   logs(" messages, ");
++   logn(strnum,i);
++   logs(" octets");
++   logfinish();
++ 
++ }
++ 
+  void pop3_stat()
+  {
+    int i;
+    unsigned long total;
++   unsigned long n;
+   
+    total = 0;
+!   n = 0;
+!   for (i = 0;i < numm;++i) if (!m[i].flagdeleted) total += m[i].size, n++;
+    puts("+OK ");
+!   put(strnum,fmt_uint(strnum,n));
+    puts(" ");
+    put(strnum,fmt_ulong(strnum,total));
+    puts("\r\n");
+***************
+*** 193,198 ****
+--- 253,261 ----
+  	rename(m[i].fn,line.s); /* if it fails, bummer */
+        }
+    okay();
++   logstart();
++   logn("shutdown",8);
++   logfinish();
+    die();
+  }
+  
+***************
+*** 293,305 ****
+  {
+    sig_alarmcatch(die);
+    sig_pipeignore();
+   
+    if (!argv[1]) die_nomaildir();
+    if (chdir(argv[1]) == -1) die_nomaildir();
+   
+    getlist();
+  
+!   okay();
+    commands(&ssin,pop3commands);
+    die();
+  }
+--- 356,372 ----
+  {
+    sig_alarmcatch(die);
+    sig_pipeignore();
++   loginit();
+   
+    if (!argv[1]) die_nomaildir();
+    if (chdir(argv[1]) == -1) die_nomaildir();
+   
+    getlist();
+  
+!   pop3_startup();
+    commands(&ssin,pop3commands);
++   logstart();
++   logn("unclean shutdown",16);
++   logfinish();
+    die();
+  }
+diff -rc qmail-1.03-orig/qmail-popup.c qmail-1.03/qmail-popup.c
+*** qmail-1.03-orig/qmail-popup.c	Thu Mar 29 13:57:02 2001
+--- qmail-1.03/qmail-popup.c	Mon Jun  4 14:34:51 2001
+***************
+*** 14,19 ****
+--- 14,21 ----
+  #include "timeoutread.h"
+  #include "timeoutwrite.h"
+  
++ stralloc username = {0};
++ 
+  void die() { _exit(1); }
+  
+  int saferead(fd,buf,len) int fd; char *buf; int len;
+***************
+*** 38,43 ****
+--- 40,75 ----
+  char ssinbuf[128];
+  substdio ssin = SUBSTDIO_FDBUF(saferead,0,ssinbuf,sizeof ssinbuf);
+  
++ char sslogbuf[128];
++ substdio sslog = SUBSTDIO_FDBUF(safewrite,2,sslogbuf,sizeof sslogbuf);
++ 
++ char log_pid[FMT_ULONG] = "";
++ loginit()
++ {
++    log_pid[fmt_ulong(log_pid,(unsigned long) getpid())] = 0;
++ }
++ void logstart()
++ {
++   substdio_put(&sslog,"pop3 ",5);
++   substdio_puts(&sslog,log_pid);
++   if (username.s) {
++     substdio_put(&sslog," <",2);
++     substdio_put(&sslog,username.s,username.len-1);
++     substdio_put(&sslog,"> ",2);
++   }
++   else
++     substdio_put(&sslog," ",1);
++ }
++ void logs(s) char *s;
++ {
++   substdio_puts(&sslog,s);
++ }
++ void logfinish()
++ {
++   substdio_put(&sslog,"\n",1);
++   substdio_flush(&sslog);
++ }
++ 
+  void puts(s) char *s;
+  {
+    substdio_puts(&ssout,s);
+***************
+*** 52,57 ****
+--- 84,93 ----
+    puts(s);
+    puts("\r\n");
+    flush();
++ 
++   logstart();
++   logs(s);
++   logfinish();
+  }
+  
+  void die_usage() { err("usage: popup hostname subprogram"); die(); }
+***************
+*** 72,84 ****
+  
+  char unique[FMT_ULONG + FMT_ULONG + 3];
+  char *hostname;
+- stralloc username = {0};
+  int seenuser = 0;
+  char **childargs;
+  substdio ssup;
+  char upbuf[128];
+  
+- 
+  void doanddie(user,userlen,pass)
+  char *user;
+  unsigned int userlen; /* including 0 byte */
+--- 108,118 ----
+***************
+*** 88,94 ****
+    int wstat;
+    int pi[2];
+   
+!   if (fd_copy(2,1) == -1) die_pipe();
+    close(3);
+    if (pipe(pi) == -1) die_pipe();
+    if (pi[0] != 3) die_pipe();
+--- 122,128 ----
+    int wstat;
+    int pi[2];
+   
+!   /* if (fd_copy(2,1) == -1) die_pipe(); */
+    close(3);
+    if (pipe(pi) == -1) die_pipe();
+    if (pi[0] != 3) die_pipe();
+***************
+*** 171,176 ****
+--- 205,211 ----
+  {
+    sig_alarmcatch(die);
+    sig_pipeignore();
++   loginit();
+   
+    hostname = argv[1];
+    if (!hostname) die_usage();
+diff -rc qmail-1.03-orig/qmail-smtpd.c qmail-1.03/qmail-smtpd.c
+*** qmail-1.03-orig/qmail-smtpd.c	Thu Mar 29 13:57:02 2001
+--- qmail-1.03/qmail-smtpd.c	Thu May 31 12:02:37 2001
+***************
+*** 39,53 ****
+  char ssoutbuf[512];
+  substdio ssout = SUBSTDIO_FDBUF(safewrite,1,ssoutbuf,sizeof ssoutbuf);
+  
+  void flush() { substdio_flush(&ssout); }
+  void out(s) char *s; { substdio_puts(&ssout,s); }
+  
+  void die_read() { _exit(1); }
+! void die_alarm() { out("451 timeout (#4.4.2)\r\n"); flush(); _exit(1); }
+! void die_nomem() { out("421 out of memory (#4.3.0)\r\n"); flush(); _exit(1); }
+! void die_control() { out("421 unable to read controls (#4.3.0)\r\n"); flush(); _exit(1); }
+  void die_ipme() { out("421 unable to figure out my IP addresses (#4.3.0)\r\n"); flush(); _exit(1); }
+! void straynewline() { out("451 See http://pobox.com/~djb/docs/smtplf.html.\r\n"); flush(); _exit(1); }
+  
+  void err_bmf() { out("553 sorry, your envelope sender is in my badmailfrom list (#5.7.1)\r\n"); }
+  void err_nogateway() { out("553 sorry, that domain isn't in my list of allowed rcpthosts (#5.7.1)\r\n"); }
+--- 39,136 ----
+  char ssoutbuf[512];
+  substdio ssout = SUBSTDIO_FDBUF(safewrite,1,ssoutbuf,sizeof ssoutbuf);
+  
++ char sslogbuf[128];
++ substdio sslog = SUBSTDIO_FDBUF(safewrite,2,sslogbuf,sizeof sslogbuf);
++ 
++ char log_pid[FMT_ULONG] = "";
++ loginit() {
++    log_pid[fmt_ulong(log_pid,(unsigned long) getpid())] = 0;
++ }
++ void logstart() {
++   substdio_put(&sslog,"smtp ",5);
++   substdio_puts(&sslog,log_pid);
++   substdio_put(&sslog," ",1);
++ }
++ void logs(s) char *s; {
++   substdio_puts(&sslog,s);
++ }
++ void logn(s, n) char *s; int n; {
++   substdio_put(&sslog,s,n);
++ }
++ void logfinish() {
++   substdio_put(&sslog,"\n",1);
++   substdio_flush(&sslog);
++ }
++ void logfailure(permanent, qqx) int permanent; char *qqx; {
++   logstart();
++   if (permanent)
++     logn("permanent",9);
++   else
++     logn("temporary",9);
++   logn(" failure: ",10);
++   logs(qqx+1);
++   logfinish();
++ }
++ void log(s1) char *s1; {
++   logstart();
++   logs(s1);
++   logfinish();
++ }
++ void loghelo(ehlo, remotehost, remoteip, helohost)
++ int ehlo; char *remotehost, *remoteip, *helohost; {
++   logstart();
++   logn(ehlo ? "ehlo" : "helo", 4);
++   logn(" from ",6);
++   logs(remotehost);
++   logn(" (",2);
++   logs(remoteip);
++   logn(")",1);
++   if (helohost) {
++     logn(" as ",4);
++     logs(helohost);
++   }
++   logfinish();
++ }
++ void logaddr(prompt, addr, tail)
++ char *prompt, *tail; stralloc *addr; {
++   logstart();
++   logs(prompt);
++   logn(addr->s, addr->len-1);
++   logs(tail);
++   logfinish();
++ }
++ void logenvelope(pfrom, from, pto, rcpt, sep, tail)
++ char *pfrom, *pto, *sep, *tail; stralloc *from, *rcpt; {
++   char *pos, *border;
++   logstart();
++   logs(pfrom);
++   logn(from->s, from->len-1);
++   logs(pto);
++   pos = rcpt->s + 1;
++   border = rcpt->s + rcpt->len - 1;
++   while (pos < border)
++   {
++     if (*pos) {
++       logn(pos, 1);
++       pos++;
++     } else {
++       logs(sep);
++       pos += 2;
++     }
++   }
++   logs(tail);
++   logfinish();
++ }
++ 
+  void flush() { substdio_flush(&ssout); }
+  void out(s) char *s; { substdio_puts(&ssout,s); }
+  
+  void die_read() { _exit(1); }
+! void die_alarm() { log("timeout"); out("451 timeout (#4.4.2)\r\n"); flush(); _exit(1); }
+! void die_nomem() { log("out of memory"); out("421 out of memory (#4.3.0)\r\n"); flush(); _exit(1); }
+! void die_control() { log("unable to read controls"); out("421 unable to read controls (#4.3.0)\r\n"); flush(); _exit(1); }
+  void die_ipme() { out("421 unable to figure out my IP addresses (#4.3.0)\r\n"); flush(); _exit(1); }
+! void straynewline() { log("bare line feed"); out("451 See http://pobox.com/~djb/docs/smtplf.html.\r\n"); flush(); _exit(1); }
+  
+  void err_bmf() { out("553 sorry, your envelope sender is in my badmailfrom list (#5.7.1)\r\n"); }
+  void err_nogateway() { out("553 sorry, that domain isn't in my list of allowed rcpthosts (#5.7.1)\r\n"); }
+***************
+*** 57,63 ****
+  void err_wantrcpt() { out("503 RCPT first (#5.5.1)\r\n"); }
+  void err_noop() { out("250 ok\r\n"); }
+  void err_vrfy() { out("252 send some mail, i'll try my best\r\n"); }
+! void err_qqt() { out("451 qqt failure (#4.3.0)\r\n"); }
+  
+  
+  stralloc greeting = {0};
+--- 140,146 ----
+  void err_wantrcpt() { out("503 RCPT first (#5.5.1)\r\n"); }
+  void err_noop() { out("250 ok\r\n"); }
+  void err_vrfy() { out("252 send some mail, i'll try my best\r\n"); }
+! void err_qqt() { log("qqt failure"); out("451 qqt failure (#4.3.0)\r\n"); }
+  
+  
+  stralloc greeting = {0};
+***************
+*** 73,78 ****
+--- 156,162 ----
+  }
+  void smtp_quit()
+  {
++   log("shutdown");
+    smtp_greet("221 "); out("\r\n"); flush(); _exit(0);
+  }
+  
+***************
+*** 226,236 ****
+--- 310,322 ----
+  {
+    smtp_greet("250 "); out("\r\n");
+    seenmail = 0; dohelo(arg);
++   loghelo(0,remoteip,remotehost,fakehelo?helohost.s:0);
+  }
+  void smtp_ehlo(arg) char *arg;
+  {
+    smtp_greet("250-"); out("\r\n250-PIPELINING\r\n250 8BITMIME\r\n");
+    seenmail = 0; dohelo(arg);
++   loghelo(1,remoteip,remotehost,fakehelo?helohost.s:0);
+  }
+  void smtp_rset()
+  {
+***************
+*** 242,247 ****
+--- 328,334 ----
+    if (!addrparse(arg)) { err_syntax(); return; }
+    flagbarf = bmfcheck();
+    seenmail = 1;
++   if (flagbarf) logaddr("bad mail from <",&addr,">,<",">");
+    if (!stralloc_copys(&rcptto,"")) die_nomem();
+    if (!stralloc_copys(&mailfrom,addr.s)) die_nomem();
+    if (!stralloc_0(&mailfrom)) die_nomem();
+***************
+*** 257,263 ****
+      if (!stralloc_0(&addr)) die_nomem();
+    }
+    else
+!     if (!addrallowed()) { err_nogateway(); return; }
+    if (!stralloc_cats(&rcptto,"T")) die_nomem();
+    if (!stralloc_cats(&rcptto,addr.s)) die_nomem();
+    if (!stralloc_0(&rcptto)) die_nomem();
+--- 344,354 ----
+      if (!stralloc_0(&addr)) die_nomem();
+    }
+    else
+!     if (!addrallowed()) {
+!       logaddr("relay denied to <", &addr, ">");
+!       err_nogateway();
+!       return;
+!     }
+    if (!stralloc_cats(&rcptto,"T")) die_nomem();
+    if (!stralloc_cats(&rcptto,addr.s)) die_nomem();
+    if (!stralloc_0(&rcptto)) die_nomem();
+***************
+*** 384,397 ****
+    if (hops) qmail_fail(&qqt);
+    qmail_from(&qqt,mailfrom.s);
+    qmail_put(&qqt,rcptto.s,rcptto.len);
+   
+    qqx = qmail_close(&qqt);
+!   if (!*qqx) { acceptmessage(qp); return; }
+!   if (hops) { out("554 too many hops, this message is looping (#5.4.6)\r\n"); return; }
+!   if (databytes) if (!bytestooverflow) { out("552 sorry, that message size exceeds my databytes limit (#5.3.4)\r\n"); return; }
+    if (*qqx == 'D') out("554 "); else out("451 ");
+    out(qqx + 1);
+    out("\r\n");
+  }
+  
+  struct commands smtpcommands[] = {
+--- 475,490 ----
+    if (hops) qmail_fail(&qqt);
+    qmail_from(&qqt,mailfrom.s);
+    qmail_put(&qqt,rcptto.s,rcptto.len);
++   logenvelope("message from <",&mailfrom,"> to <", &rcptto, ">,<",">");
+   
+    qqx = qmail_close(&qqt);
+!   if (!*qqx) { log("message queued"); acceptmessage(qp); return; }
+!   if (hops) { log("too many hops"); out("554 too many hops, this message is looping (#5.4.6)\r\n"); return; }
+!   if (databytes) if (!bytestooverflow) { log("too big"); out("552 sorry, that message size exceeds my databytes limit (#5.3.4)\r\n"); return; }
+    if (*qqx == 'D') out("554 "); else out("451 ");
+    out(qqx + 1);
+    out("\r\n");
++   logfailure(*qqx == 'D', qqx+1);
+  }
+  
+  struct commands smtpcommands[] = {
+***************
+*** 411,416 ****
+--- 504,510 ----
+  void main()
+  {
+    sig_pipeignore();
++   loginit();
+    if (chdir(auto_qmail) == -1) die_control();
+    setup();
+    if (ipme_init() != 1) die_ipme();

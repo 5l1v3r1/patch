@@ -1,0 +1,21 @@
+Index: spamd/spamd.raw
+===================================================================
+--- spamd/spamd.raw	(revision 47637)
++++ spamd/spamd.raw	(working copy)
+@@ -1659,14 +1659,11 @@
+ 
+ sub logmsg_file {
+   my $msg = shift;
+-  my @date = reverse( ( gmtime(time) )[ 0 .. 5 ] );
+-  $date[0] += 1900;
+-  $date[1] += 1;
+   syswrite(
+     STDLOG,
+     sprintf(
+-      "%04d-%02d-%02d %02d:%02d:%02d [%s] %s: %s\n",
+-      @date, $$, 'i', $msg
++      "spamd[%s]: %s\n",
++      $$, $msg
+     )
+   );
+ }

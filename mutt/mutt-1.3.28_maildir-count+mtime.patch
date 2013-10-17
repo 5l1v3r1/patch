@@ -1,0 +1,172 @@
+diff -u mutt-1.3.28.orig/browser.c mutt-1.3.28/browser.c
+--- mutt-1.3.28.orig/browser.c	Tue Dec 18 09:13:17 2001
++++ mutt-1.3.28/browser.c	Wed Jun  4 17:14:58 2003
+@@ -251,8 +251,16 @@
+ 	break;
+       }
+ #endif
+-      snprintf (tmp, sizeof (tmp), "%%%sc", fmt);
+-      snprintf (dest, destlen, tmp, folder->ff->new ? 'N' : ' ');
++      if (option(OPTCOUNTNEW) && S_ISDIR(folder->ff->mode) && folder->ff->new)
++      {
++        snprintf (tmp, sizeof (tmp), "%%%sd", fmt);
++        snprintf (dest, destlen, tmp, folder->ff->new);
++      }
++      else
++      {
++	snprintf (tmp, sizeof (tmp), "%%%sc", fmt);
++	snprintf (dest, destlen, tmp, folder->ff->new ? 'N' : ' ');
++      }
+       break;
+       
+     case 's':
+@@ -300,8 +308,10 @@
+ }
+ 
+ static void add_folder (MUTTMENU *m, struct browser_state *state,
+-			const char *name, const struct stat *s, int new)
++			const char *name, const struct stat *s, BUFFY *mbuf)
+ {
++  int new = (mbuf) ? mbuf->new : 0;
++  
+   if (state->entrylen == state->entrymax)
+   {
+     /* need to allocate more space */
+@@ -313,6 +323,9 @@
+       m->data = state->entry;
+   }
+ 
++  if (mbuf && mbuf->magic == M_MAILDIR && mbuf->mtime)
++    s->st_mtime = mbuf->mtime;
++  
+   if (s != NULL)
+   {
+     (state->entry)[state->entrylen].mode = s->st_mode;
+@@ -407,7 +420,7 @@
+     tmp = Incoming;
+     while (tmp && mutt_strcmp (buffer, tmp->path))
+       tmp = tmp->next;
+-    add_folder (menu, state, de->d_name, &s, (tmp) ? tmp->new : 0);
++    add_folder (menu, state, de->d_name, &s, tmp);
+   }
+   closedir (dp);  
+   browser_sort (state);
+@@ -431,14 +444,14 @@
+ #ifdef USE_IMAP
+     if (mx_is_imap (tmp->path))
+     {
+-      add_folder (menu, state, tmp->path, NULL, tmp->new);
++      add_folder (menu, state, tmp->path, NULL, tmp);
+       continue;
+     }
+ #endif
+ #ifdef USE_POP
+     if (mx_is_pop (tmp->path))
+     {
+-      add_folder (menu, state, tmp->path, NULL, tmp->new);
++      add_folder (menu, state, tmp->path, NULL, tmp);
+       continue;
+     }
+ #endif
+@@ -452,7 +465,7 @@
+     strfcpy (buffer, NONULL(tmp->path), sizeof (buffer));
+     mutt_pretty_mailbox (buffer);
+ 
+-    add_folder (menu, state, buffer, &s, tmp->new);
++    add_folder (menu, state, buffer, &s, tmp);
+   }
+   while ((tmp = tmp->next));
+   browser_sort (state);
+diff -u mutt-1.3.28.orig/buffy.c mutt-1.3.28/buffy.c
+--- mutt-1.3.28.orig/buffy.c	Wed Oct 10 05:34:11 2001
++++ mutt-1.3.28/buffy.c	Wed Jun  4 17:23:59 2003
+@@ -194,6 +194,7 @@
+     (*tmp)->new = 0;
+     (*tmp)->notified = 1;
+     (*tmp)->newly_created = 0;
++    (*tmp)->mtime = 0;
+ 
+ #ifdef BUFFY_SIZE
+     /* for buffy_size, it is important that if the folder is new (tested by
+@@ -225,6 +226,7 @@
+ {
+   BUFFY *tmp;
+   struct stat sb;
++  struct stat smd;
+   struct dirent *de;
+   DIR *dirp;
+   char path[_POSIX_PATH_MAX];
+@@ -264,6 +266,7 @@
+   for (tmp = Incoming; tmp; tmp = tmp->next)
+   {
+     tmp->new = 0;
++    tmp->mtime = 0;
+ 
+ #ifdef USE_IMAP
+     if ((tmp->magic == M_IMAP) || mx_is_imap (tmp->path))
+@@ -350,9 +353,14 @@
+ 	      (!(p = strstr (de->d_name, ":2,")) || !strchr (p + 3, 'T')))
+ 	  {
+ 	    /* one new and undeleted message is enough */
+-	    BuffyCount++;
+-	    tmp->new = 1;
+-	    break;
++	    if (!tmp->new) BuffyCount++;
++	    tmp->new++;
++//	    if (!option(OPTCOUNTNEW)) break; // removed logic from merge of maildir-count/mtime patches
++	    snprintf (path, sizeof (path), "%s/new/%s", tmp->path, de->d_name);
++	    if (!stat (path, &smd) && smd.st_mtime > tmp->mtime)
++	    {
++	      tmp->mtime = smd.st_mtime;
++	    }
+ 	  }
+ 	}
+ 	closedir (dirp);
+diff -u mutt-1.3.28.orig/buffy.h mutt-1.3.28/buffy.h
+--- mutt-1.3.28.orig/buffy.h	Fri Mar  3 04:10:06 2000
++++ mutt-1.3.28/buffy.h	Wed Jun  4 17:14:58 2003
+@@ -23,6 +23,7 @@
+   long size;
+ #endif				/* BUFFY_SIZE */
+   struct buffy_t *next;
++  time_t mtime;			/* for maildirs...time of newest entry */
+   short new;			/* mailbox has new mail */
+   short notified;		/* user has been notified */
+   short magic;			/* mailbox type */
+Common subdirectories: mutt-1.3.28.orig/contrib and mutt-1.3.28/contrib
+Common subdirectories: mutt-1.3.28.orig/doc and mutt-1.3.28/doc
+Common subdirectories: mutt-1.3.28.orig/imap and mutt-1.3.28/imap
+diff -u mutt-1.3.28.orig/init.h mutt-1.3.28/init.h
+--- mutt-1.3.28.orig/init.h	Wed Jun  4 16:46:05 2003
++++ mutt-1.3.28/init.h	Wed Jun  4 17:14:11 2003
+@@ -291,6 +291,16 @@
+   ** \fIcheck_new\fP is \fIunset\fP, no check for new mail is performed
+   ** while the mailbox is open.
+   */
++  { "count_new", DT_BOOL, R_NONE, OPTCOUNTNEW, 0 },
++  /*
++  ** .pp
++  ** \fBNote:\fP this option only affects \fImaildir\fP and \fIMH\fP style
++  ** mailboxes.
++  ** .pp
++  ** When \fIunset\fP, Mutt will only show whether the mailbox has new mail,
++  ** when \fIset\fP, Mutt will additionally count the number of new messages,
++  ** if any.
++  */
+   { "collapse_unread",	DT_BOOL, R_NONE, OPTCOLLAPSEUNREAD, 1 },
+   /*
+   ** .pp
+Common subdirectories: mutt-1.3.28.orig/intl and mutt-1.3.28/intl
+Common subdirectories: mutt-1.3.28.orig/m4 and mutt-1.3.28/m4
+diff -u mutt-1.3.28.orig/mutt.h mutt-1.3.28/mutt.h
+--- mutt-1.3.28.orig/mutt.h	Wed Jun  4 16:46:05 2003
++++ mutt-1.3.28/mutt.h	Wed Jun  4 17:14:11 2003
+@@ -374,6 +374,7 @@
+   OPTKEEPFLAGGED,
+   OPTMAILCAPSANITIZE,
+   OPTMAILDIRTRASH,
++  OPTCOUNTNEW,
+   OPTMARKERS,
+   OPTMARKOLD,
+   OPTMENUSCROLL,	/* scroll menu instead of implicit next-page */
+Common subdirectories: mutt-1.3.28.orig/po and mutt-1.3.28/po
